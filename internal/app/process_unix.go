@@ -4,7 +4,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -135,15 +134,15 @@ func terminateProcessGroup(cmd *exec.Cmd, gracefulSignal syscall.Signal, exited 
 	ticker := time.NewTicker(processGroupQuiescencePollPeriod)
 	defer ticker.Stop()
 	for {
-		err := syscall.Kill(-processGroupID, 0)
-		if errors.Is(err, syscall.ESRCH) {
-			return nil
-		}
-		if err != nil && !errors.Is(err, syscall.EPERM) {
+		active, err := processGroupActive(processGroupID)
+		if err != nil {
 			return fmt.Errorf("%w: confirm process group %d termination: %v", errProcessCleanupIncomplete, processGroupID, err)
 		}
+		if !active {
+			return nil
+		}
 		if !time.Now().Before(deadline) {
-			return fmt.Errorf("%w: process group %d still exists after %s", errProcessCleanupIncomplete, processGroupID, processGroupQuiescenceTimeout)
+			return fmt.Errorf("%w: process group %d still has runnable members after %s", errProcessCleanupIncomplete, processGroupID, processGroupQuiescenceTimeout)
 		}
 		<-ticker.C
 	}

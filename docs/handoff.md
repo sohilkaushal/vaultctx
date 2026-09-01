@@ -1,14 +1,16 @@
 # Current handoff
 
-Last updated: 2026-09-02 (Australia/Melbourne)
+Last updated: 2026-09-01 (UTC)
 
 ## Current outcome
 
 The security-focused MVP is feature-complete, but it is **not yet
-release-stamped**. Two final-quality P2 findings were addressed in the current
-tree. Their focused regressions pass, including the original flaky macOS test
-300 consecutive times. The full post-fix release matrix and independent
-reviewer restamp are still pending.
+release-stamped**. A Linux CI failure in process-group cleanup was reproduced
+locally and fixed: killed orphan descendants can remain as zombies when the
+host PID 1 does not promptly reap them, and `kill(-pgid, 0)` treats that
+zombie-only, non-runnable group as existing. Linux cleanup confirmation now
+checks `/proc` state and remains fail-closed on inspection errors. The full
+post-fix release matrix and independent reviewer restamp are still pending.
 
 Do not rely on the earlier implementation-review `SHIP` verdict: it predates
 the latest process-lifecycle and doctor portability changes. Do not ship the
@@ -28,18 +30,28 @@ The final-quality reviewer returned `DO NOT SHIP` with two concrete P2s:
 The current tree addresses both:
 
 - `internal/app/process_unix.go` now waits, for a bounded one second, until the
-  killed process group no longer exists. It sends no signal after reaping the
+  killed process group is quiescent. It sends no signal after reaping the
   leader, avoiding damage if the numeric group ID is reused.
 - If group quiescence cannot be confirmed, the code returns an error wrapping
   `errProcessCleanupIncomplete`; `runExec` no longer masks that error as ordinary
   context cancellation.
 - `TestExecCancellationKillsSameGroupDescendants` now also asserts that the
-  process group is absent when `vaultctx` returns.
+  process group has no runnable members when `vaultctx` returns.
 - `doctor` reports verified owner/POSIX checks only on Linux, retains the macOS
   extended-ACL warning, and warns that filesystem ownership/hard-link checks
   are unverified on other platforms.
 - `TestConfigValidationStatusDoesNotOverclaimUnsupportedPlatforms` covers
   Linux, macOS, Windows, FreeBSD, OpenBSD, and Plan 9 messages.
+
+The subsequent CI review found and addressed one additional lifecycle issue:
+
+- On Linux runners whose PID 1 does not promptly reap orphaned children, the
+  same-group descendant test consistently failed after one second even though
+  SIGKILL had already made every remaining member a zombie. The implementation
+  now distinguishes runnable members from Linux zombies using `/proc`, while
+  macOS retains the process-group existence probe. Parser coverage includes
+  spaces and closing parentheses in process names, and the end-to-end
+  cancellation regression verifies both quiescence and a stopped heartbeat.
 
 ## Verification evidence
 
@@ -57,17 +69,36 @@ PASS
 
 go test ./internal/app -run '^TestExecCancellationKillsSameGroupDescendants$' -count=300
 PASS (124.951s)
+
+go test ./internal/app -run 'Test(ExecCancellationKillsSameGroupDescendants|LinuxProcessGroupState)$' -count=20
+PASS
+
+make fmt-check
+PASS
+
+make vet
+PASS
+
+make test
+PASS
+
+make race
+PASS
+
+go test ./... -shuffle=on -count=10
+PASS
+
+CGO_ENABLED=0 GOOS=<os> GOARCH=<arch> go build -o /private/tmp/vaultctx-<os>-<arch> ./cmd/vaultctx
+PASS for Linux amd64/arm64, Windows amd64, FreeBSD amd64, OpenBSD amd64,
+illumos amd64, Plan 9 amd64, and Darwin amd64/arm64
 ```
 
-These remaining gates were green before the two latest P2 fixes, but are stale
+The first post-review complete gate exposed the Linux zombie-only group failure
+during `make test`; that attempt did not reach `make race`. The required full
+gate is now green after the fix. These additional release gates remain stale
 and must be rerun on the current tree:
 
-- `go test -race ./...`
-- `go vet ./...`
-- `go test ./... -shuffle=on -count=10`
 - focused Bash/Zsh, cancellation, and lock repetitions
-- CGO-disabled builds for Linux amd64/arm64, Windows amd64, FreeBSD amd64,
-  OpenBSD amd64, illumos amd64, and Plan 9 amd64
 - a real CLI add/use/env/exec/doctor smoke flow
 
 Fish and PowerShell are not installed on this host. Their real-shell tests are
