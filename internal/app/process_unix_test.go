@@ -208,8 +208,12 @@ func TestExecCancellationKillsSameGroupDescendants(t *testing.T) {
 	if elapsed := time.Since(canceledAt); elapsed < processTerminationGrace {
 		t.Fatalf("SIGTERM-ignoring process group returned after %v, before %v grace period", elapsed, processTerminationGrace)
 	}
-	if err := syscall.Kill(-processGroupID, 0); !errors.Is(err, syscall.ESRCH) {
-		t.Fatalf("process group %d still exists after vaultctx returned: %v", processGroupID, err)
+	active, err := processGroupActive(processGroupID)
+	if err != nil {
+		t.Fatalf("check process group %d after vaultctx returned: %v", processGroupID, err)
+	}
+	if active {
+		t.Fatalf("process group %d still has runnable members after vaultctx returned", processGroupID)
 	}
 
 	descendantReady := ready + ".descendant"

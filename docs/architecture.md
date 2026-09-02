@@ -118,10 +118,13 @@ bounded and must resolve to a known in-memory name.
 macOS/Linux non-interactive children run in a dedicated process group. The
 entry point retains SIGINT versus SIGTERM as the cancellation cause; the group
 receives that signal, gets a bounded grace period, and then receives SIGKILL.
-Signal-derived child exits use the conventional `128 + signal` status. A child
-with terminal stdin remains in the foreground process group so interactive
-prompts work. On other platforms cancellation is direct-child-only, and a
-deliberately daemonized process is outside the portable cleanup policy.
+Signal-derived child exits use the conventional `128 + signal` status. Linux
+uses `/proc` process states when confirming cleanup because an orphaned,
+already-killed zombie can keep `kill(-pgid, 0)` successful until the host's PID
+1 reaps it; zombie-only groups cannot execute and are quiescent. A child with
+terminal stdin remains in the foreground process group so interactive prompts
+work. On other platforms cancellation is direct-child-only, and a deliberately
+daemonized process is outside the portable cleanup policy.
 
 ## Future design constraints
 
