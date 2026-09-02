@@ -1,6 +1,6 @@
 # Current handoff
 
-Last updated: 2026-09-01 (UTC)
+Last updated: 2026-09-02 (UTC)
 
 ## Current outcome
 
@@ -11,6 +11,13 @@ host PID 1 does not promptly reap them, and `kill(-pgid, 0)` treats that
 zombie-only, non-runnable group as existing. Linux cleanup confirmation now
 checks `/proc` state and remains fail-closed on inspection errors. The full
 post-fix release matrix and independent reviewer restamp are still pending.
+
+A subsequent P1 review found that Linux treated `EPERM` from the kernel's
+process-group probe as permission to fall back to `/proc`. A filtered `/proc`
+could then hide an inaccessible runnable descendant and produce a false
+quiescence result. The Linux probe now preserves the kernel evidence by
+reporting the group active immediately on `EPERM`; an adversarial regression
+injects that kernel result and verifies it cannot fall through to `/proc`.
 
 Do not rely on the earlier implementation-review `SHIP` verdict: it predates
 the latest process-lifecycle and doctor portability changes. Do not ship the
@@ -53,7 +60,25 @@ The subsequent CI review found and addressed one additional lifecycle issue:
   spaces and closing parentheses in process names, and the end-to-end
   cancellation regression verifies both quiescence and a stopped heartbeat.
 
+The follow-up Codex review found and addressed a P1 in that Linux-specific
+logic: `EPERM` from `kill(-pgid, 0)` definitively means a process group exists
+but is inaccessible, so the implementation now reports it active without
+consulting a potentially incomplete `/proc` view.
+
 ## Verification evidence
+
+Current-tree checks completed after the `EPERM` fix:
+
+```text
+go test ./internal/app -run 'Test(ProcessGroupActivePreservesPermissionDenied|LinuxProcessGroupState|ExecCancellationKillsSameGroupDescendants)$' -count=10
+PASS
+
+make fmt-check
+make vet
+make test
+make race
+PASS
+```
 
 Current-tree checks completed after the two P2 fixes:
 

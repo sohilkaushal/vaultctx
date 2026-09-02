@@ -2,7 +2,20 @@
 
 package app
 
-import "testing"
+import (
+	"syscall"
+	"testing"
+)
+
+func TestProcessGroupActivePreservesPermissionDenied(t *testing.T) {
+	active, err := processGroupActiveAfterProbe(1<<30, syscall.EPERM)
+	if err != nil {
+		t.Fatalf("processGroupActive() error = %v", err)
+	}
+	if !active {
+		t.Fatal("processGroupActive() = false after EPERM probe, want true")
+	}
+}
 
 func TestLinuxProcessGroupState(t *testing.T) {
 	for _, testCase := range []struct {

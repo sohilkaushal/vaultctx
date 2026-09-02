@@ -17,12 +17,21 @@ import (
 // until their new parent reaps them; kill(-pgid, 0) reports such a zombie-only
 // group as existing even though none of its members can execute.
 func processGroupActive(processGroupID int) (bool, error) {
-	err := syscall.Kill(-processGroupID, 0)
-	if errors.Is(err, syscall.ESRCH) {
+	return processGroupActiveAfterProbe(processGroupID, syscall.Kill(-processGroupID, 0))
+}
+
+func processGroupActiveAfterProbe(processGroupID int, probeErr error) (bool, error) {
+	if errors.Is(probeErr, syscall.ESRCH) {
 		return false, nil
 	}
-	if err != nil && !errors.Is(err, syscall.EPERM) {
-		return false, err
+	if errors.Is(probeErr, syscall.EPERM) {
+		// The kernel confirmed that the group exists, but this process cannot
+		// signal it. Do not let a restricted or filtered /proc view override
+		// that result: it may hide a runnable same-group descendant.
+		return true, nil
+	}
+	if probeErr != nil {
+		return false, probeErr
 	}
 
 	entries, err := os.ReadDir("/proc")
