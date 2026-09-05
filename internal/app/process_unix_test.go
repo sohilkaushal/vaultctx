@@ -336,6 +336,9 @@ func TestExecGroupSignalEPERMRequiresQuiescence(t *testing.T) {
 						if pid > 0 && group > 0 {
 							if actual, err := syscall.Getpgid(pid); err == nil && actual == group {
 								_ = syscall.Kill(pid, syscall.SIGKILL)
+								if err := confirmProcessGroupQuiescence(group); err != nil {
+									t.Errorf("clean up refused-signal descendant: %v", err)
+								}
 							}
 						}
 					}
@@ -366,11 +369,7 @@ func TestExecGroupSignalEPERMRequiresQuiescence(t *testing.T) {
 				}
 				if state == "live descendant" {
 					before := waitForHelperFile(t, ready+".descendant")
-					time.Sleep(50 * time.Millisecond)
-					after := waitForHelperFile(t, ready+".descendant")
-					if string(before) == string(after) {
-						t.Fatal("refused group signal did not leave a live heartbeat descendant")
-					}
+					waitForHelperHeartbeatAdvance(t, ready+".descendant", before)
 				}
 			})
 		}
@@ -470,11 +469,7 @@ func TestCleanupReportsRefusedGroupAndDirectSignals(t *testing.T) {
 				t.Fatal("refused group and direct SIGKILL left cleanup blocked")
 			}
 			before := waitForHelperFile(t, ready)
-			time.Sleep(50 * time.Millisecond)
-			after := waitForHelperFile(t, ready)
-			if string(before) == string(after) {
-				t.Fatal("signal refusal did not leave the child alive")
-			}
+			waitForHelperHeartbeatAdvance(t, ready, before)
 		})
 	}
 }
@@ -620,6 +615,26 @@ func waitForHelperFile(t *testing.T, path string) []byte {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("helper did not create %s", path)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func waitForHelperHeartbeatAdvance(t *testing.T, path string, before []byte) {
+	t.Helper()
+	// A live helper need not be scheduled within a fixed 50ms interval on a
+	// busy CI runner. Require actual progress within a bounded window instead.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read helper heartbeat: %v", err)
+		}
+		if string(before) != string(after) {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatal("signal refusal did not leave an advancing helper heartbeat")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

@@ -1,253 +1,88 @@
-# Astra session handoff
+# Session handoff
 
-Last updated: 2026-09-05. This is the live resume document referenced by
-`AGENTS.md`. The user requested that work be checkpointed and committed for a
-new Astra session; implementation was paused for that handoff.
+Last updated: 2026-09-05. Continue on `codex/fix-fish-shell-integration`.
+The documented macOS EPERM failure and subsequent review findings are fixed.
 
-## Start here
+## Current checkpoint
 
-Resume update (2026-09-05): the EPERM cause is now reproduced and fixed in the
-working tree on the existing branch. An unsandboxed `ps` diagnostic showed the
-leader in `Z` state before the final group SIGKILL returned EPERM. Darwin's
-`killpg1` skips zombies. The fix accepts that signal error only on Darwin and
-only after successful direct-child cleanup, reap, and independent quiescence
-confirmation. Linux EPERM handling is unchanged. Pending exit notifications
-are now consumed before `Wait` to avoid a Linux `waitid(WNOWAIT)`/reap race.
-Focused cancellation and refused-delivery/active-descendant regressions pass;
-`make fmt-check vet test race` passed before the final status-37 test extension.
-Repeated verification, cross-builds, independent reviews, and CI for the new
-source are still pending. The historical checkpoint details below remain for
-comparison and will be replaced by final evidence as this session completes.
-
-Independent Standards and Specification reviews of `9b7c3ff` both withheld
-approval for two P2 findings: the terminal-child path still reaped before its
-pending Linux observer, and refused group plus direct-child SIGKILL could
-block cleanup indefinitely. Both are fixed in the working tree: shared
-observer-before-reap waiting covers direct children, and a failed direct kill
-gets a one-second exit-wait bound plus an eventual background reaper that
-never signals. Adversarial tests cover both delivery refusals in cancellation
-and observer-error paths, and delayed Linux observation after SIGKILL.
-The earlier shuffle x20, nine cross-builds, Linux lifecycle x20, and full/race
-passes apply to `9b7c3ff`; fresh verification and reviewer restamps are pending.
-
-Review follow-up: Standards approved `e9dcf6d`; Specification found one further
-P2: a pending observer retrieval error was held behind blocked reaping and
-discarded at the timeout. The new pending-error/double-refusal regression
-reproduced that loss. The working tree now publishes observation separately
-from reaping, preserving the diagnostic on timeout. Final restamps and gates
-are pending for this last correction.
-
-The MVP is feature-complete, but **the current checkpoint is not ready to
-merge or release**. The latest observer-cleanup changes fix the focused
-observer-error cases but introduce a reproducible macOS cancellation failure.
-Start with that failure, not another feature or a release build.
-
-Read `AGENTS.md`, `README.md`, `SECURITY.md`, and `docs/architecture.md`.
-Then inspect the saved checkpoint:
-
-```sh
-git status --short --branch
-git log -6 --oneline
-git diff b4430b4..HEAD -- internal/app docs/architecture.md
-```
-
-All pending source changes are being saved with this handoff in a local WIP
-commit whose parent is `b4430b4a6520274618aea856eae3f6fffd0fb4eb`.
-Resolve the checkpoint SHA with `git rev-parse HEAD`; commit status is not a
-release approval. The handoff commit message is
-`wip(exec): checkpoint observer cleanup and Astra handoff`.
-
-## Repository and remote state
-
-- Workspace: `/Users/sohil/Development/vaultctx`.
-- Branch: `codex/fix-fish-shell-integration`.
+- Reviewed source: `5c6c3d4df47d02c0cc88934315a795f571df1635`.
+- Verified base: `94cf22d5c92f9a60a683e62be8acbf2da2910abc` (`origin/main`).
 - Remote: `git@github.com:sohilkaushal/vaultctx.git`.
-- PR: [#2](https://github.com/sohilkaushal/vaultctx/pull/2), last inspected as open.
-- Last observed remote PR head: `adda5bd2486a29b463bdf4c7c1e0841604c9999d`.
-  The handoff checkpoint and local `b0dbb69`/`b4430b4` have not been pushed.
-  Recheck GitHub before acting; remote observations are from this session.
-- Base: `origin/main` at `94cf22d5c92f9a60a683e62be8acbf2da2910abc`,
-  the merged PR #1. Local `main` was stale; use the verified remote base.
-- PR #2 title/body still describe only the Fish fix. Rewrite them around the
-  final Fish and process-lifecycle changes before the eventual push.
+- [PR #2](https://github.com/sohilkaushal/vaultctx/pull/2) is open. The reviewed
+  source is pushed; its title/body now cover Fish and process cleanup.
+- Independent Standards/security and Specification reviews both restamped
+  `5c6c3d4` with no unresolved P1/P2 findings.
+- Full local fmt/vet/test/race gates and focused Linux regressions pass.
+  Final repetitions and CI are being collected. See
+  [review-report.md](review-report.md) for exact commands and evidence.
 
-## Immediate blocker: final SIGKILL returns EPERM
+## Root cause and final behavior
 
-The current `terminateProcessGroup` captures a failed final group SIGKILL as
-`errProcessCleanupIncomplete`. On this macOS host,
-`TestExecCancellationPreservesSignalCause` now returns 1 instead of 130/143:
+An unsandboxed temporary `ps` diagnostic showed the child in zombie state
+before Darwin's final group-SIGKILL returned EPERM. Apple's `killpg1` skips
+zombies during group signaling. The diagnostic was removed.
 
-```text
-process_unix_test.go:329: canceled exec code = 1, want 130
-process cleanup incomplete: process group <pid>:
-send SIGKILL to process group: operation not permitted
-```
+The Darwin EPERM exception requires successful direct-child cleanup, reaping,
+and independent group-quiescence confirmation. EPERM from a group probe still
+means potentially active on macOS and Linux. Live descendants, failed probes,
+and other signal errors remain cleanup errors.
 
-All three subcases (plain cancellation, SIGINT, SIGTERM) failed in the ordinary
-test build. The failure also reproduced once outside the Codex sandbox, so it
-cannot be dismissed as a sandbox-only artifact. The race build passed once;
-that timing-dependent pass does not resolve the ordinary-build failure.
+Pending observations precede `Wait` in group and terminal-child cancellation,
+preventing Linux `waitid(WNOWAIT)` from racing with reaping. If direct SIGKILL
+is refused, exit waiting is bounded to one second; group probing has a separate
+one-second bound. A background waiter retains eventual reaping responsibility
+and sends no more signals. Observer completion is published separately so an
+available retrieval error survives a reap timeout. Failed cleanup cannot
+promise that a signal-denied child has stopped.
 
-Smallest reproduction, using a task-specific cache:
+Cancellation statuses 130/143, independently completed status 37, observer
+diagnostics, signal-before-reap ordering, and descendant cleanup have
+adversarial regressions. The branch retains the Fish 3.7 empty-value and
+option-terminator fix and Darwin kqueue registration-race fix.
 
-```sh
-GOCACHE=/private/tmp/vaultctx-astra-gocache \
-GOMODCACHE=/private/tmp/vaultctx-astra-gomodcache \
-go test ./internal/app -run '^TestExecCancellationPreservesSignalCause$' -count=1
-```
+## Review history
 
-Confirmed: the final signal's EPERM is now promoted to a cleanup error.
-Unconfirmed hypothesis: the child may already have exited from the graceful
-signal when the final group signal runs. Determine the actual macOS process
-state and signal semantics before choosing a fix. Preserve the signal-before-
-reap ordering and prove group quiescence.
-
-The Linux `processGroupActiveAfterProbe` rule that treats EPERM from
-`kill(-pgid, 0)` as an active group is a separate, reviewed security invariant.
-Do not weaken that probe rule to fix this final-SIGKILL issue.
-
-## What is implemented
-
-| Checkpoint | Change and review state |
+| Checkpoint | Result |
 | --- | --- |
-| `94cf22d` (merged PR #1) | MVP plus agent guide, Linux zombie-aware cleanup, EPERM probe fix, and honest doctor platform reporting. |
-| `6ba6285` + `adda5bd` (remote PR #2) | Fish 3.7 empty-value normalization and option terminator; path-list and leading-hyphen regressions. Local reviewers approved this checkpoint for CI. |
-| `b0dbb69` (local) | Darwin registration-time kqueue ESRCH becomes a ready exit notification; other registration errors and retrieval errors still report failure. Review found a cancellation/descendant gap. |
-| `b4430b4` (local) | A successful exit notification concurrent with cancellation cleans descendants before reaping and preserves the real child status, including CLI status 37. Subsequent review rejected observer-error abort paths. |
-| Current WIP checkpoint | Observer-error aborts now kill, reap, and confirm group quiescence; preserve observer diagnostics during cancellation; expose cleanup errors. Focused tests pass, but ordinary cancellation fails as described above. |
+| `c505489` | Saved WIP; ordinary cancellation fails with EPERM. |
+| `9b7c3ff` | EPERM fixed; both reviewers found P2 terminal observer ordering and indefinite double-refusal cleanup. |
+| `e9dcf6d` | Original P2s fixed; Standards passed, Specification found pending observer diagnostic lost on timeout. |
+| `5c6c3d4` | Final diagnostic fix; both reviewers pass, no unresolved P1/P2 findings. |
 
-The current patch changes these files:
+## Remaining completion work
 
-- `internal/app/process_unix.go`: shared quiescence confirmation,
-  `abortAfterObserverFailure`, error-returning abort, separate wait/observer/
-  cleanup results, and injectable signal/probe functions. Ordinary cancellation
-  also now reports final SIGKILL errors and pending observer errors.
-- `internal/app/process_commands.go`: maps to context cancellation only when
-  the returned error actually matches `ctx.Err()`; cleanup errors and real
-  child exit statuses retain priority.
-- `internal/app/process_unix_test.go`: bounded registration/retrieval failure
-  cases with cancellation and heartbeat descendants, plus injected signal and
-  probe failures. These package-global seams require nonparallel tests.
-- `docs/architecture.md`: records intended observer-error cleanup behavior.
-  It describes implementation intent, not proof that this checkpoint is ready.
-- `docs/handoff.md`: this resume state.
+CI follow-up: on source head `5c6c3d4`, the push CI, all macOS jobs, both
+Fish/PowerShell jobs, and CodeQL passed. The PR Ubuntu/oldstable job failed two
+new live-heartbeat assertions that assumed progress within 50ms. The matching
+push job passed. The tests now require actual heartbeat advancement within a
+bounded two-second polling window; runtime code is unchanged. Fresh test gates,
+test-only review restamps, and CI are pending for this adjustment.
+The final `5c6c3d4` shuffle also exposed a test-cleanup race: killing the
+intentionally surviving descendant without confirming quiescence let TempDir
+removal race with its final heartbeat write. That cleanup now confirms group
+quiescence before returning. Neither adjustment changes runtime source.
 
-The injected signal-error test first delivers the real SIGKILL and then returns
-EPERM. It tests diagnostic priority, not a real inability to signal or behavior
-when the leader has already exited. Extend coverage appropriately during the fix.
+1. Collect final shuffled, repeated lifecycle/race, Linux, and CI results for
+   `5c6c3d4`. CI must include real Fish/PowerShell, macOS/Linux stable and
+   oldstable Go, race, and CodeQL.
+2. Build and smoke-test a fresh internal candidate after gates are green;
+   record source commit, version, and checksum. The old candidate was stale.
+3. Recheck GitHub Codex: the last observed summary covers `adda5bd`, not the
+   new source. No new review request comment has been sent this session.
+4. Commit/push final evidence documents. Any later stop-ship source edit needs
+   fresh gates and independent restamps.
+5. Public release remains blocked by the absent license (owner decision) and
+   private-reporting setup in `SECURITY.md`. No merge, tag, license, or public
+   release artifact has been created.
 
-Additional review targets, not confirmed findings:
+## Tooling
 
-- Linux's exit observer uses `waitid(WNOWAIT)`; inspect ordering of `cmd.Wait`
-  and receiving the pending observer result now that observer errors propagate.
-- A one-second bound covers group quiescence probing, not every cleanup stage.
-  Inspect direct-child fallback and potentially blocking Wait if signals fail.
-- Preserve the distinction between already-consumed and pending notifications;
-  avoid a second channel receive or a second Wait.
+Host: macOS arm64, Go 1.26.6, Bash/Zsh installed. Task caches:
+`GOCACHE=/private/tmp/vaultctx-eperm-gocache` and
+`GOMODCACHE=/private/tmp/vaultctx-eperm-gomodcache`.
 
-## Verification for the current source
-
-These results apply to the source saved in the WIP checkpoint, before the final
-handoff-only rewrite. No source changes were made during the handoff.
-
-| Check | Result |
-| --- | --- |
-| `make fmt-check`, `make vet`, `git diff --check` | PASS |
-| `make test` | FAIL: the three cancellation-signal subcases above; other packages passed |
-| `make race` | PASS once, all five packages; `internal/app` 7.960s |
-| Focused observer tests, count 10 | PASS, 4.549s |
-| Same observer tests under race detector, count 20 | PASS, 9.971s |
-| Combined lifecycle tests, count 20 | FAIL, 46.946s; repeated cancellation status 1 instead of 130/143 |
-| Isolated cancellation-signal test outside sandbox, count 1 | FAIL, 1.409s; all three subcases |
-| Full shuffled repetitions and cross-builds after this patch | Not completed; earlier passes are stale |
-
-Focused passing commands:
-
-```sh
-go test ./internal/app -run 'TestExecObserverFailure(TerminatesChild|CleansCanceledDescendants|SurfacesCleanupFailure)$' -count=10
-go test -race ./internal/app -run 'TestExecObserverFailure(TerminatesChild|CleansCanceledDescendants|SurfacesCleanupFailure)$' -count=20
-```
-
-The broader failed command was:
-
-```sh
-go test ./internal/app -run 'Test(ExecObserverFailureTerminatesChild|ExecObserverFailureCleansCanceledDescendants|ExecObserverFailureSurfacesCleanupFailure|ExecCancellationTerminatesChildProcessGroup|ExecCancellationPreservesSignalCause|ExecCancellationKillsSameGroupDescendants|ManagedCommandPreservesExitStatusAfterDarwinRegistrationRace|ManagedCommandCleansDescendantWhenDarwinRegistrationRaceIsCanceled)$' -count=20
-```
-
-The interrupted test session was retrieved and completed; its result was
-failure, not a passing or still-pending check. Handoff verification used
-`/private/tmp/vaultctx-handoff-gocache` and
-`/private/tmp/vaultctx-handoff-gomodcache`.
-
-Historical evidence is available in
-`git show b4430b4:docs/handoff.md`. That earlier source passed full/race,
-shuffle x20, lifecycle x50, Darwin intersection x100, and nine cross-builds.
-Those results do not approve the current observer-abort patch.
-
-## Next steps and completion criteria
-
-1. Reproduce and fix the final-SIGKILL EPERM failure. Require normal
-   cancellation statuses 130/143, real exit status 37 in the completed-child
-   tie, preserved observer diagnostics, and confirmed descendant cleanup.
-2. Run the focused regression first, then `make fmt-check`, `make vet`,
-   `make test`, and `make race`. After source is stable, run shuffle x20 and
-   relevant repeated lifecycle tests, including the observer-error cases.
-3. Cross-build with `CGO_ENABLED=0`: Linux amd64/arm64; Darwin amd64/arm64;
-   Windows, FreeBSD, OpenBSD, illumos, and Plan 9 amd64. Also compile
-   `internal/app` tests for Darwin amd64/arm64 and Linux amd64. Run Linux
-   lifecycle regressions in an appropriate environment.
-4. Commit the corrected source and obtain independent Standards and
-   Specification reviews of that exact commit against the verified base.
-   Both reviews of `b4430b4` returned DO NOT SHIP for the observer-abort gap;
-   there is no final approval for the current patch. Resolve findings and
-   record the current review verdicts before treating it as release-ready.
-5. Update PR #2's title/body, push the branch, and require CI to pass on the
-   new head, including real Fish and PowerShell integration. Recheck Codex
-   review status for the new head; earlier completed reviews are stale.
-6. Add `docs/review-report.md` with commit-specific review, tests, and CI
-   evidence. Build and smoke-test a fresh internal candidate with
-   `make build VERSION=v0.1.0`, then record its checksum.
-7. Public publication remains blocked by the absent license. The owner must
-   choose it. Also follow SECURITY.md's private-reporting setup requirements.
-   A local candidate or commit is not a published release.
-
-Update this file when a blocker, test result, or release decision changes.
-The user's latest request was to save and hand off; this session did not push,
-merge, publish, or build a new release candidate.
-
-## CI, tooling, and resources
-
-PR #2's last inspected Fish-only head `adda5bd` passed both Fish/PowerShell
-jobs, Ubuntu tests, race, and CodeQL. macOS jobs exposed the fast-child race.
-Example failed runs:
-[push CI](https://github.com/sohilkaushal/vaultctx/actions/runs/33950679765),
-[PR CI](https://github.com/sohilkaushal/vaultctx/actions/runs/33950723662).
-These are historical results, not CI evidence for local lifecycle commits.
-
-The GitHub Codex connector was functioning: its
-[summary comment](https://github.com/sohilkaushal/vaultctx/pull/2#issuecomment-5550068293)
-reported Code Review and Security Review complete for `adda5bd`. The lack of
-inline review comments did not mean the trigger was ignored.
-
-This host was macOS arm64, Go 1.26.6, with Bash/Zsh, Vault, and fzf installed.
-Fish 3.7 was tested in an Ubuntu 24.04 Podman container named
-`vaultctx-fish37-debug`; PowerShell ran in GitHub CI. That disposable container
-was not removed during the handoff. Inspect before reusing or removing it.
-Temporary caches and test artifacts live under `/private/tmp`; they are
-rebuildable and are not required to resume. The existing `bin/vaultctx` is a
-stale v0.1.0-rc1 and must not be shipped.
-
-If SSH fetch again advertises no refs, an authenticated HTTPS fetch worked:
-
-```sh
-git -c credential.helper='!gh auth git-credential' fetch https://github.com/sohilkaushal/vaultctx.git refs/heads/main:refs/remotes/origin/main
-```
-
-## Suggested first prompt for Astra
-
-Continue vaultctx from docs/handoff.md on the existing
-codex/fix-fish-shell-integration branch. Start with the documented macOS
-cancellation EPERM failure in the saved WIP checkpoint. Preserve the security
-invariants, complete the required verification and independent reviews, update
-PR #2, and keep the handoff current. The current checkpoint is not approved for
-release.
+The existing Ubuntu 24.04 arm64 Podman container `vaultctx-fish37-debug`
+was reused for compiled Linux app tests. It has Fish but no Go compiler; test
+binaries are copied into `/tmp`. No unrelated containers were changed.
+Cross-build artifacts: `/private/tmp/vaultctx-eperm-cross`. Runtime remains
+standard-library-only, with no license and no `go.sum`.
