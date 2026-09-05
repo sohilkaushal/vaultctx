@@ -30,6 +30,13 @@ and observer-error paths, and delayed Linux observation after SIGKILL.
 The earlier shuffle x20, nine cross-builds, Linux lifecycle x20, and full/race
 passes apply to `9b7c3ff`; fresh verification and reviewer restamps are pending.
 
+Review follow-up: Standards approved `e9dcf6d`; Specification found one further
+P2: a pending observer retrieval error was held behind blocked reaping and
+discarded at the timeout. The new pending-error/double-refusal regression
+reproduced that loss. The working tree now publishes observation separately
+from reaping, preserving the diagnostic on timeout. Final restamps and gates
+are pending for this last correction.
+
 The MVP is feature-complete, but **the current checkpoint is not ready to
 merge or release**. The latest observer-cleanup changes fix the focused
 observer-error cases but introduce a reproducible macOS cancellation failure.

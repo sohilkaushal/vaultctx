@@ -400,7 +400,7 @@ func TestExecCancellationTerminatesChildProcessGroup(t *testing.T) {
 }
 
 func TestCleanupReportsRefusedGroupAndDirectSignals(t *testing.T) {
-	for _, path := range []string{"group cancellation", "direct cancellation", "group observer failure", "direct observer failure"} {
+	for _, path := range []string{"group cancellation", "direct cancellation", "group observer failure", "direct observer failure", "group pending retrieval failure", "direct pending retrieval failure"} {
 		t.Run(path, func(t *testing.T) {
 			ready := filepath.Join(t.TempDir(), "ready")
 			cmd := exec.Command(os.Args[0], "-test.run=^TestVaultctxExecProcessHelper$")
@@ -428,8 +428,16 @@ func TestCleanupReportsRefusedGroupAndDirectSignals(t *testing.T) {
 			killDirectProcess = func(*os.Process) error { return syscall.EPERM }
 			t.Cleanup(func() { signalProcess, killDirectProcess = originalSignal, originalKill })
 			observerFailure := strings.HasSuffix(path, "observer failure")
+			pendingFailure := strings.HasSuffix(path, "pending retrieval failure")
 			var exited <-chan error
-			if !observerFailure {
+			if pendingFailure {
+				pending := make(chan error, 1)
+				killDirectProcess = func(*os.Process) error {
+					pending <- errors.New("injected double-refusal observer failure")
+					return syscall.EPERM
+				}
+				exited = pending
+			} else if !observerFailure {
 				var closeObserver func()
 				var err error
 				exited, closeObserver, err = processExitNotification(cmd.Process.Pid)
@@ -441,10 +449,10 @@ func TestCleanupReportsRefusedGroupAndDirectSignals(t *testing.T) {
 			done := make(chan error, 1)
 			go func() {
 				switch path {
-				case "group cancellation":
-					_, _, err := terminateProcessGroup(cmd, syscall.SIGTERM, exited)
-					done <- err
-				case "direct cancellation":
+				case "group cancellation", "group pending retrieval failure":
+					_, observerErr, cleanupErr := terminateProcessGroup(cmd, syscall.SIGTERM, exited)
+					done <- errors.Join(cleanupErr, observerErr)
+				case "direct cancellation", "direct pending retrieval failure":
 					done <- terminateDirectProcess(cmd, syscall.SIGTERM, exited)
 				default:
 					done <- abortAfterObserverFailure(cmd, strings.HasPrefix(path, "group"), errors.New("injected double-refusal observer failure"))
@@ -455,7 +463,7 @@ func TestCleanupReportsRefusedGroupAndDirectSignals(t *testing.T) {
 				if !errors.Is(err, errProcessCleanupIncomplete) || !strings.Contains(err.Error(), "direct child exit unconfirmed") {
 					t.Fatalf("refused signal error = %v", err)
 				}
-				if observerFailure && !strings.Contains(err.Error(), "injected double-refusal observer failure") {
+				if (observerFailure || pendingFailure) && !strings.Contains(err.Error(), "injected double-refusal observer failure") {
 					t.Fatalf("observer diagnostic lost: %v", err)
 				}
 			case <-time.After(4 * time.Second):

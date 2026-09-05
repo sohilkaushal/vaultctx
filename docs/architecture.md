@@ -149,6 +149,8 @@ before reporting incomplete cleanup; group probing has its own one-second
 bound. A background waiter retains responsibility for the child's eventual
 reap and never sends another signal. This error path cannot promise that a
 signal-denied child has stopped.
+Observer completion is published separately from reaping, so a retrieval
+diagnostic already received is preserved even when the reap deadline expires.
 On other platforms cancellation is direct-child-only, and a deliberately
 daemonized process is outside the portable cleanup policy.
 

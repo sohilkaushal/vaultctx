@@ -180,8 +180,7 @@ func terminateProcessGroup(cmd *exec.Cmd, gracefulSignal syscall.Signal, pending
 }
 
 func waitForTerminatedProcess(cmd *exec.Cmd, pendingExit <-chan error, signalFailed bool) (waitErr, observerErr error) {
-	wait := func() (error, error) {
-		var observerErr error
+	if !signalFailed {
 		if pendingExit != nil {
 			// Linux observes exit with waitid(WNOWAIT). Consume that result
 			// before Wait reaps the child, or it can spuriously report ECHILD.
@@ -189,26 +188,33 @@ func waitForTerminatedProcess(cmd *exec.Cmd, pendingExit <-chan error, signalFai
 		}
 		return cmd.Wait(), observerErr
 	}
-	if !signalFailed {
-		return wait()
-	}
 
 	// If even direct-child SIGKILL failed, exit may never arrive. Retain a
 	// single background reaper for eventual exit, but bound the caller's wait
 	// so the known cleanup failure can surface. This worker never signals.
-	type result struct{ waitErr, observerErr error }
-	done := make(chan result, 1)
+	observed := make(chan error, 1)
+	reaped := make(chan error, 1)
 	go func() {
-		waitErr, observerErr := wait()
-		done <- result{waitErr, observerErr}
+		var observerErr error
+		if pendingExit != nil {
+			observerErr = <-pendingExit
+		}
+		// Publish observation separately: Wait may block beyond the caller's
+		// deadline, but an available observer diagnostic must not be lost.
+		observed <- observerErr
+		reaped <- cmd.Wait()
 	}()
 	timer := time.NewTimer(processGroupQuiescenceTimeout)
 	defer timer.Stop()
 	select {
-	case result := <-done:
-		return result.waitErr, result.observerErr
+	case waitErr := <-reaped:
+		return waitErr, <-observed
 	case <-timer.C:
-		return errors.New("direct child exit unconfirmed after failed SIGKILL"), nil
+		select {
+		case observerErr = <-observed:
+		default:
+		}
+		return errors.New("direct child exit unconfirmed after failed SIGKILL"), observerErr
 	}
 }
 
