@@ -96,6 +96,186 @@ func TestExecObserverFailureTerminatesChild(t *testing.T) {
 	}
 }
 
+func TestExecObserverFailureCleansCanceledDescendants(t *testing.T) {
+	for _, registrationFailure := range []bool{true, false} {
+		name := "retrieval"
+		if registrationFailure {
+			name = "registration"
+		}
+		t.Run(name, func(t *testing.T) {
+			ready := filepath.Join(t.TempDir(), "parent-ready")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			originalObserver := observeProcessExit
+			observeProcessExit = func(int) (<-chan error, func(), error) {
+				if !waitForPath(ready, 2*time.Second) {
+					return nil, nil, errors.New("helper did not become ready before observer failure")
+				}
+				cancel()
+				injected := errors.New("injected observer failure with cancellation")
+				if registrationFailure {
+					return nil, nil, injected
+				}
+				result := make(chan error, 1)
+				result <- injected
+				return result, func() {}, nil
+			}
+			t.Cleanup(func() { observeProcessExit = originalObserver })
+
+			inspectionCalls := 0
+			originalInspection := inspectProcessGroup
+			inspectProcessGroup = func(processGroupID int) (bool, error) {
+				inspectionCalls++
+				return originalInspection(processGroupID)
+			}
+			t.Cleanup(func() { inspectProcessGroup = originalInspection })
+			t.Cleanup(func() {
+				data, err := os.ReadFile(ready)
+				if err != nil {
+					return
+				}
+				fields := strings.Fields(string(data))
+				if len(fields) != 2 {
+					return
+				}
+				descendantPID, pidErr := strconv.Atoi(fields[0])
+				processGroupID, groupErr := strconv.Atoi(fields[1])
+				if pidErr != nil || groupErr != nil {
+					return
+				}
+				if actualGroup, err := syscall.Getpgid(descendantPID); err == nil && actualGroup == processGroupID {
+					_ = syscall.Kill(descendantPID, syscall.SIGKILL)
+				}
+			})
+
+			testApp := newExecHelperApplication(t, "spawn-descendant", ready)
+			done := make(chan int, 1)
+			go func() {
+				done <- testApp.app.Execute(ctx, execHelperCommand())
+			}()
+			select {
+			case code := <-done:
+				if code != 1 {
+					t.Fatalf("observer failure exit code = %d, want 1; stderr=%s", code, testApp.errOut.String())
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("observer failure with cancellation did not return")
+			}
+			if inspectionCalls == 0 {
+				t.Fatal("observer failure cleanup did not inspect process-group quiescence")
+			}
+			if !strings.Contains(testApp.errOut.String(), "injected observer failure with cancellation") {
+				t.Fatalf("observer failure was masked: %s", testApp.errOut.String())
+			}
+
+			fields := strings.Fields(string(waitForHelperFile(t, ready)))
+			if len(fields) != 2 {
+				t.Fatalf("helper state has %d fields, want descendant PID and process group", len(fields))
+			}
+			descendantPID, err := strconv.Atoi(fields[0])
+			if err != nil {
+				t.Fatalf("parse descendant PID: %v", err)
+			}
+			processGroupID, err := strconv.Atoi(fields[1])
+			if err != nil {
+				t.Fatalf("parse process group: %v", err)
+			}
+			active, err := processGroupActive(processGroupID)
+			if err != nil {
+				t.Fatalf("check process group %d after observer failure: %v", processGroupID, err)
+			}
+			if active {
+				t.Fatalf("process group %d still has runnable descendants after observer failure", processGroupID)
+			}
+
+			descendantReady := ready + ".descendant"
+			before, err := os.ReadFile(descendantReady)
+			if err != nil {
+				t.Fatalf("read descendant heartbeat: %v", err)
+			}
+			time.Sleep(100 * time.Millisecond)
+			after, err := os.ReadFile(descendantReady)
+			if err != nil {
+				t.Fatalf("read descendant heartbeat after observer failure: %v", err)
+			}
+			if string(before) != string(after) {
+				t.Fatalf("descendant process %d remained running after observer failure (heartbeat %q -> %q)", descendantPID, before, after)
+			}
+		})
+	}
+}
+
+func TestExecObserverFailureSurfacesCleanupFailure(t *testing.T) {
+	testCases := []struct {
+		name      string
+		detail    string
+		configure func(t *testing.T)
+	}{
+		{
+			name:   "group signal",
+			detail: "operation not permitted",
+			configure: func(t *testing.T) {
+				originalSignal := signalProcess
+				signalProcess = func(pid int, signal syscall.Signal) error {
+					err := originalSignal(pid, signal)
+					if pid < 0 && signal == syscall.SIGKILL {
+						return syscall.EPERM
+					}
+					return err
+				}
+				t.Cleanup(func() { signalProcess = originalSignal })
+			},
+		},
+		{
+			name:   "group inspection",
+			detail: "injected process-group inspection failure",
+			configure: func(t *testing.T) {
+				originalInspection := inspectProcessGroup
+				inspectProcessGroup = func(int) (bool, error) {
+					return false, errors.New("injected process-group inspection failure")
+				}
+				t.Cleanup(func() { inspectProcessGroup = originalInspection })
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			ready := filepath.Join(t.TempDir(), "ready")
+			originalObserver := observeProcessExit
+			observeProcessExit = func(int) (<-chan error, func(), error) {
+				if !waitForPath(ready, 2*time.Second) {
+					return nil, nil, errors.New("helper did not become ready before observer failure")
+				}
+				return nil, nil, errors.New("injected observer failure during incomplete cleanup")
+			}
+			t.Cleanup(func() { observeProcessExit = originalObserver })
+			testCase.configure(t)
+
+			testApp := newExecHelperApplication(t, "linger", ready)
+			done := make(chan int, 1)
+			go func() {
+				done <- testApp.app.Execute(context.Background(), execHelperCommand())
+			}()
+			select {
+			case code := <-done:
+				if code != 1 {
+					t.Fatalf("cleanup failure exit code = %d, want 1", code)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("observer cleanup failure did not return")
+			}
+			stderr := testApp.errOut.String()
+			for _, fragment := range []string{errProcessCleanupIncomplete.Error(), "injected observer failure during incomplete cleanup", testCase.detail} {
+				if !strings.Contains(stderr, fragment) {
+					t.Fatalf("cleanup failure stderr is missing %q: %s", fragment, stderr)
+				}
+			}
+		})
+	}
+}
+
 func TestExecCancellationTerminatesChildProcessGroup(t *testing.T) {
 	ready := filepath.Join(t.TempDir(), "ready")
 	testApp := newExecHelperApplication(t, "linger", ready)

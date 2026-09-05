@@ -141,8 +141,8 @@ func (a *App) runExec(ctx context.Context, args []string) error {
 		if errors.As(err, &exitErr) {
 			return &exitStatus{code: managedExitCode(exitErr)}
 		}
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+			return ctxErr
 		}
 		return fmt.Errorf("execute %q: %w", options.command[0], err)
 	}

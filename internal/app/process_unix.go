@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,7 +20,11 @@ const (
 
 type exitObserverFunc func(int) (<-chan error, func(), error)
 
-var observeProcessExit exitObserverFunc = processExitNotification
+var (
+	observeProcessExit  exitObserverFunc = processExitNotification
+	signalProcess                        = syscall.Kill
+	inspectProcessGroup                  = processGroupActive
+)
 
 // runManagedCommand gives a non-interactive child a dedicated process group.
 // On cancellation, the whole group first receives the preserved SIGINT or
@@ -52,16 +57,14 @@ func runManagedCommand(ctx context.Context, cmd *exec.Cmd) error {
 	}
 	exited, closeObserver, err := observeProcessExit(cmd.Process.Pid)
 	if err != nil {
-		abortUnmonitoredCommand(cmd, dedicatedProcessGroup)
-		return err
+		return abortAfterObserverFailure(cmd, dedicatedProcessGroup, err)
 	}
 	defer closeObserver()
 
 	select {
 	case observerErr := <-exited:
 		if observerErr != nil {
-			abortUnmonitoredCommand(cmd, dedicatedProcessGroup)
-			return observerErr
+			return abortAfterObserverFailure(cmd, dedicatedProcessGroup, observerErr)
 		}
 		return finishObservedCommand(ctx, cmd, dedicatedProcessGroup)
 	case <-ctx.Done():
@@ -70,19 +73,24 @@ func runManagedCommand(ctx context.Context, cmd *exec.Cmd) error {
 		select {
 		case observerErr := <-exited:
 			if observerErr != nil {
-				abortUnmonitoredCommand(cmd, dedicatedProcessGroup)
-				return observerErr
+				return abortAfterObserverFailure(cmd, dedicatedProcessGroup, observerErr)
 			}
 			return finishObservedCommand(ctx, cmd, dedicatedProcessGroup)
 		default:
 		}
 		gracefulSignal := cancellationProcessSignal(ctx)
 		if dedicatedProcessGroup {
-			if _, err := terminateProcessGroup(cmd, gracefulSignal, exited); err != nil {
-				return err
+			_, observerErr, cleanupErr := terminateProcessGroup(cmd, gracefulSignal, exited)
+			if cleanupErr != nil {
+				return errors.Join(cleanupErr, observerErr)
+			}
+			if observerErr != nil {
+				return observerErr
 			}
 		} else {
-			terminateDirectProcess(cmd, gracefulSignal, exited)
+			if observerErr := terminateDirectProcess(cmd, gracefulSignal, exited); observerErr != nil {
+				return observerErr
+			}
 		}
 		return ctx.Err()
 	}
@@ -96,20 +104,39 @@ func finishObservedCommand(ctx context.Context, cmd *exec.Cmd, dedicatedProcessG
 	// The direct child is still unreaped, so its process-group ID cannot be
 	// reused. Clean the group before Wait releases that protection, then retain
 	// the independently completed child's real result.
-	waitErr, cleanupErr := terminateProcessGroup(cmd, cancellationProcessSignal(ctx), nil)
+	waitErr, _, cleanupErr := terminateProcessGroup(cmd, cancellationProcessSignal(ctx), nil)
 	if cleanupErr != nil {
 		return cleanupErr
 	}
 	return waitErr
 }
 
-func abortUnmonitoredCommand(cmd *exec.Cmd, dedicatedProcessGroup bool) {
-	if dedicatedProcessGroup {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	} else {
-		_ = cmd.Process.Kill()
+func abortAfterObserverFailure(cmd *exec.Cmd, dedicatedProcessGroup bool, observerErr error) error {
+	cleanupErr := abortUnmonitoredCommand(cmd, dedicatedProcessGroup)
+	if cleanupErr != nil {
+		return errors.Join(cleanupErr, observerErr)
 	}
-	_ = cmd.Wait()
+	return observerErr
+}
+
+func abortUnmonitoredCommand(cmd *exec.Cmd, dedicatedProcessGroup bool) error {
+	if !dedicatedProcessGroup {
+		signalErr := unexpectedSignalError("kill direct child", cmd.Process.Kill())
+		waitErr := unexpectedWaitError(cmd.Wait())
+		return directProcessCleanupError(signalErr, waitErr)
+	}
+
+	processGroupID := cmd.Process.Pid
+	groupSignalErr := unexpectedSignalError("send SIGKILL to process group", signalProcess(-processGroupID, syscall.SIGKILL))
+	var directSignalErr error
+	if groupSignalErr != nil {
+		// A failed group signal must not prevent reaping the direct child while
+		// the caller records that descendant cleanup could not be guaranteed.
+		directSignalErr = unexpectedSignalError("kill direct child after group signal failure", cmd.Process.Kill())
+	}
+	waitErr := unexpectedWaitError(cmd.Wait())
+	quiescenceErr := confirmProcessGroupQuiescence(processGroupID)
+	return processGroupCleanupError(processGroupID, groupSignalErr, directSignalErr, waitErr, quiescenceErr)
 }
 
 func commandUsesTerminalStdin(cmd *exec.Cmd) bool {
@@ -127,21 +154,31 @@ func cancellationProcessSignal(ctx context.Context) syscall.Signal {
 	return syscall.SIGTERM
 }
 
-func terminateProcessGroup(cmd *exec.Cmd, gracefulSignal syscall.Signal, pendingExit <-chan error) (waitErr, cleanupErr error) {
+func terminateProcessGroup(cmd *exec.Cmd, gracefulSignal syscall.Signal, pendingExit <-chan error) (waitErr, observerErr, cleanupErr error) {
 	processGroupID := cmd.Process.Pid
-	_ = syscall.Kill(-processGroupID, gracefulSignal)
+	_ = signalProcess(-processGroupID, gracefulSignal)
 
 	timer := time.NewTimer(processTerminationGrace)
 	defer timer.Stop()
 	<-timer.C
 	// The direct child has intentionally not been reaped, so its PID cannot be
 	// reused as an unrelated group ID before this one final group signal.
-	_ = syscall.Kill(-processGroupID, syscall.SIGKILL)
+	groupSignalErr := unexpectedSignalError("send SIGKILL to process group", signalProcess(-processGroupID, syscall.SIGKILL))
+	var directSignalErr error
+	if groupSignalErr != nil {
+		directSignalErr = unexpectedSignalError("kill direct child after group signal failure", cmd.Process.Kill())
+	}
 	waitErr = cmd.Wait()
 	if pendingExit != nil {
-		<-pendingExit
+		observerErr = <-pendingExit
 	}
+	waitCleanupErr := unexpectedWaitError(waitErr)
+	quiescenceErr := confirmProcessGroupQuiescence(processGroupID)
+	cleanupErr = processGroupCleanupError(processGroupID, groupSignalErr, directSignalErr, waitCleanupErr, quiescenceErr)
+	return waitErr, observerErr, cleanupErr
+}
 
+func confirmProcessGroupQuiescence(processGroupID int) error {
 	// Reaping the direct child does not prove that the kernel has finished
 	// stopping and reaping every same-group descendant. Poll group existence
 	// after the final SIGKILL so cancellation cannot report completion while a
@@ -151,27 +188,27 @@ func terminateProcessGroup(cmd *exec.Cmd, gracefulSignal syscall.Signal, pending
 	ticker := time.NewTicker(processGroupQuiescencePollPeriod)
 	defer ticker.Stop()
 	for {
-		active, err := processGroupActive(processGroupID)
+		active, err := inspectProcessGroup(processGroupID)
 		if err != nil {
-			return waitErr, fmt.Errorf("%w: confirm process group %d termination: %v", errProcessCleanupIncomplete, processGroupID, err)
+			return fmt.Errorf("confirm process group termination: %w", err)
 		}
 		if !active {
-			return waitErr, nil
+			return nil
 		}
 		if !time.Now().Before(deadline) {
-			return waitErr, fmt.Errorf("%w: process group %d still has runnable members after %s", errProcessCleanupIncomplete, processGroupID, processGroupQuiescenceTimeout)
+			return fmt.Errorf("still has runnable members after %s", processGroupQuiescenceTimeout)
 		}
 		<-ticker.C
 	}
 }
 
-func terminateDirectProcess(cmd *exec.Cmd, gracefulSignal syscall.Signal, exited <-chan error) {
+func terminateDirectProcess(cmd *exec.Cmd, gracefulSignal syscall.Signal, exited <-chan error) (observerErr error) {
 	_ = cmd.Process.Signal(gracefulSignal)
 	timer := time.NewTimer(processTerminationGrace)
 	defer timer.Stop()
 	observed := false
 	select {
-	case observerErr := <-exited:
+	case observerErr = <-exited:
 		observed = true
 		if observerErr != nil {
 			_ = cmd.Process.Kill()
@@ -181,8 +218,43 @@ func terminateDirectProcess(cmd *exec.Cmd, gracefulSignal syscall.Signal, exited
 	}
 	_ = cmd.Wait()
 	if !observed {
-		<-exited
+		observerErr = <-exited
 	}
+	return observerErr
+}
+
+func unexpectedSignalError(operation string, err error) error {
+	if err == nil || errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}
+
+func unexpectedWaitError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return nil
+	}
+	return fmt.Errorf("reap direct child: %w", err)
+}
+
+func processGroupCleanupError(processGroupID int, failures ...error) error {
+	failure := errors.Join(failures...)
+	if failure == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: process group %d: %v", errProcessCleanupIncomplete, processGroupID, failure)
+}
+
+func directProcessCleanupError(failures ...error) error {
+	failure := errors.Join(failures...)
+	if failure == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: direct child: %v", errProcessCleanupIncomplete, failure)
 }
 
 func managedExitCode(exitErr *exec.ExitError) int {

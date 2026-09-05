@@ -131,6 +131,11 @@ registration errors and every retrieval error remain fail-closed. If context
 cancellation has already arrived when an exit notification is consumed, the
 unreaped leader continues to reserve the process-group ID while vaultctx
 terminates and confirms the group; the leader's real wait result is retained.
+Registration and retrieval failures take the same signal-before-reap path,
+confirm group quiescence, and retain the observer diagnostic. A failed final
+group signal, unexpected reap result, failed probe, or quiescence timeout is
+reported as incomplete cleanup rather than being masked by concurrent
+cancellation.
 On other platforms cancellation is direct-child-only, and a deliberately
 daemonized process is outside the portable cleanup policy.
 
