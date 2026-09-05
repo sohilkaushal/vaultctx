@@ -1,16 +1,28 @@
 # Current handoff
 
-Last updated: 2026-09-02 (UTC)
+Last updated: 2026-09-05 (UTC)
 
 ## Current outcome
 
 The security-focused MVP is feature-complete, but it is **not yet
-release-stamped**. A Linux CI failure in process-group cleanup was reproduced
-locally and fixed: killed orphan descendants can remain as zombies when the
-host PID 1 does not promptly reap them, and `kill(-pgid, 0)` treats that
-zombie-only, non-runnable group as existing. Linux cleanup confirmation now
-checks `/proc` state and remains fail-closed on inspection errors. The full
-post-fix release matrix and independent reviewer restamp are still pending.
+release-stamped**. PR #1 merged the agent handoff and Linux process-lifecycle
+fixes to `main` as `94cf22d`. Its Go, race, macOS/Linux, and CodeQL checks
+passed, but both mandatory `shell-integration` runs failed on Fish 3.7.0.
+
+Work is now on `codex/fix-fish-shell-integration`. The Fish activation guard no
+longer relies on an empty command substitution that Fish 3.7 drops, and it uses
+an explicit option terminator so a leading-hyphen value cannot be interpreted
+as a `string join` flag. The exact Fish 3.7 failure has been reproduced locally
+in an Ubuntu 24.04 container and the corrected real-shell suite passes. The
+post-edit local full/race/shuffled gates, cross-build matrix, and isolated CLI
+smoke are green. Fresh independent review and a green follow-up PR CI run are
+still required.
+
+The earlier Linux CI failure in process-group cleanup was reproduced and
+fixed: killed orphan descendants can remain as zombies when the host PID 1
+does not promptly reap them, and `kill(-pgid, 0)` treats that zombie-only,
+non-runnable group as existing. Linux cleanup confirmation checks `/proc` state
+and remains fail-closed on inspection errors.
 
 A subsequent P1 review found that Linux treated `EPERM` from the kernel's
 process-group probe as permission to fall back to `/proc`. A filtered `/proc`
@@ -65,7 +77,64 @@ logic: `EPERM` from `kill(-pgid, 0)` definitively means a process group exists
 but is inaccessible, so the implementation now reports it active without
 consulting a potentially incomplete `/proc` view.
 
+The merged PR then exposed a Fish 3.7 compatibility failure in the mandatory
+real-shell CI job:
+
+- For a cleared variable, unquoted Fish expansion supplied no values to
+  `string join`; Fish 3.7 then removed the nominally empty collected command
+  substitution. The generated `test` command received only `= ''` and failed.
+- `writeFishAssignment` now captures the joined value in a local variable and
+  explicitly normalizes a missing element to the empty string before checking
+  the assignment.
+- The join uses `--` before its separator. An adversarial `-q` namespace can no
+  longer turn into the built-in's quiet flag.
+- The real-shell regression covers absent metadata, caller-local bindings,
+  universal-variable shadowing, a colon-separated path value, a leading-hyphen
+  value, and native command failure propagation.
+
 ## Verification evidence
+
+Current working-tree checks after the final Fish renderer edit:
+
+```text
+make fmt-check
+make vet
+make test
+make race
+PASS
+
+go test ./... -shuffle=on -count=20
+PASS
+
+go test ./internal/contextenv -run 'Test(ShellInitRunsAtTopLevelInBashAndZsh|BashAndZshShellInitRejectNestedScopedActivation|BashAndZshShellInitRejectCrossDialectUse|BashShellInitRejectsReadonlyEnvironmentWithoutPartialActivation)$' -count=50
+PASS
+
+go test ./internal/config -run 'Test(PersistentLockRepairsRestrictiveUmask|StoreConcurrentUpdatesDoNotLoseMutations)$' -count=20
+PASS
+
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go test -c -o <temp>/contextenv.test ./internal/contextenv
+<Ubuntu 24.04 / Fish 3.7.0> contextenv.test -test.run '^TestFishShellInitPropagatesNativeFailureAndHandlesMissingVariables$' -test.count=100
+PASS
+
+<Ubuntu 24.04 / Fish 3.7.0> contextenv.test
+PASS
+
+CGO_ENABLED=0 GOOS=<os> GOARCH=<arch> go build -o <temp>/vaultctx-<os>-<arch> ./cmd/vaultctx
+PASS for Linux amd64/arm64, Windows amd64, FreeBSD amd64, OpenBSD amd64,
+illumos amd64, Plan 9 amd64, and Darwin amd64/arm64
+```
+
+A fresh isolated CLI smoke also passed with an absolute temporary config and a
+new temporary binary. It covered version, add/use/current, Fish rendering,
+fingerprinting, destination/fingerprint-bound `exec`, ambient credential
+clearing with fake canaries, and `doctor`. Standard output remained
+machine-safe, no canary values appeared in diagnostics, and `doctor` reported
+zero errors plus only the documented macOS extended-ACL warning.
+
+The cancellation/observer suite passed 50 repetitions and same-group
+descendant cleanup passed 300 repetitions immediately before the final
+Fish-only edit. Process lifecycle code and tests did not change afterward; the
+complete test/race/shuffled gates were rerun after the Fish edit.
 
 Current-tree checks completed after the `EPERM` fix:
 
@@ -120,68 +189,36 @@ illumos amd64, Plan 9 amd64, and Darwin amd64/arm64
 
 The first post-review complete gate exposed the Linux zombie-only group failure
 during `make test`; that attempt did not reach `make race`. The required full
-gate is now green after the fix. These additional release gates remain stale
-and must be rerun on the current tree:
+gate and the formerly stale focused/smoke gates are now green. Fish and
+PowerShell are not installed directly on this host. Fish 3.7 was exercised in
+the disposable Linux container described above; PowerShell must still pass in
+the follow-up PR's mandatory `shell-integration` job.
 
-- focused Bash/Zsh, cancellation, and lock repetitions
-- a real CLI add/use/env/exec/doctor smoke flow
+## Remaining release checklist
 
-Fish and PowerShell are not installed on this host. Their real-shell tests are
-present in `internal/contextenv/contextenv_test.go`; CI installs Fish, requires
-`pwsh`, and runs both suites. Treat that CI job as mandatory before public
-release.
+If source changes again, rerun the complete release gate with sandbox-writable,
+task-specific caches before relying on any evidence above. Otherwise, the next
+agent should:
 
-## Resume checklist
-
-Use a sandbox-writable cache:
-
-```sh
-export GOCACHE=/private/tmp/vaultctx-handoff-gocache
-```
-
-Then run:
-
-```sh
-gofmt -l cmd internal
-go vet ./...
-go test ./...
-go test -race ./...
-go test ./... -shuffle=on -count=20
-go test ./internal/contextenv -run 'Test(ShellInitRunsAtTopLevelInBashAndZsh|BashAndZshShellInitRejectNestedScopedActivation|BashAndZshShellInitRejectCrossDialectUse|BashShellInitRejectsReadonlyEnvironmentWithoutPartialActivation)$' -count=50
-go test ./internal/config -run 'Test(PersistentLockRepairsRestrictiveUmask|StoreConcurrentUpdatesDoNotLoseMutations)$' -count=20
-```
-
-Cross-build the entrypoint with `CGO_ENABLED=0` for:
-
-```text
-linux/amd64
-linux/arm64
-windows/amd64
-freebsd/amd64
-openbsd/amd64
-illumos/amd64
-plan9/amd64
-```
-
-Write outputs outside the repository, for example under `/private/tmp`, so
-targets cannot overwrite one another or the local binary.
-
-After all gates pass:
-
-1. Obtain fresh independent `SHIP` verdicts on the current tree, specifically
-   asking reviewers to recheck process-group quiescence and doctor portability.
-2. Run the Fish/PowerShell CI integration job.
-3. Add `docs/review-report.md` with exact current-tree evidence and caveats.
-4. Build a fresh `v0.1.0` binary and checksum it.
-5. Smoke-test add/list/saved-default use, shell rendering, guarded `exec`, and
-   `doctor` with an isolated absolute `VAULTCTX_CONFIG`.
+1. Commit the Fish fix and this handoff update.
+2. Obtain fresh independent `SHIP` verdicts on the committed tree, asking the
+   reviewers to recheck the Fish renderer as well as process-group quiescence
+   and doctor portability.
+3. Push the branch, open the follow-up PR, and require the complete CI workflow,
+   especially Fish and PowerShell `shell-integration`, to pass.
+4. Add `docs/review-report.md` with exact current-tree review, local, and CI
+   evidence plus caveats.
+5. Build a fresh `v0.1.0` candidate and checksum only after the last source
+   change. Do not overwrite or ship the stale `bin/vaultctx` beforehand.
+6. Ask the owner to choose a license before any public release or external
+   contribution workflow. Do not infer that legal choice.
 
 ## Environment and release caveats
 
-- This is an active Git repository. Work started from `main` at `43eab54`, with
-  `origin` pointing to `git@github.com:sohilkaushal/vaultctx.git`. Verify the
-  current branch and remote state when resuming; this handoff does not represent
-  a release tag or published GitHub release.
+- This is an active Git repository. `origin/main` was `94cf22d` when
+  `codex/fix-fish-shell-integration` was created. `origin` points to
+  `git@github.com:sohilkaushal/vaultctx.git`. This handoff does not represent a
+  release tag or published GitHub release.
 - The repository intentionally has no `LICENSE`. A local/internal candidate can
   be tested, but public publication and external contributions require the
   owner to choose a license.
@@ -196,8 +233,8 @@ After all gates pass:
   the tree before the latest two fixes. That verdict is stale and must be
   renewed.
 - Final-quality reviewer: issued `DO NOT SHIP` for the process-group and doctor
-  portability P2s above. Both are addressed locally, but the reviewer has not
-  yet restamped the fix.
+  portability P2s above. Both are merged and locally verified, but a current
+  reviewer has not yet restamped the complete Fish-fix tree.
 
 No agent should collapse this history into an unconditional release approval
-until the resume checklist is complete.
+until the remaining release checklist is complete.

@@ -335,7 +335,14 @@ func writeFishAssignment(b *strings.Builder, key, value string) {
 	// Vault value as unset without deleting the user's universal definition.
 	fmt.Fprintf(b, "    set -gx %s %s\n", key, quoted)
 	fmt.Fprintf(b, "    set -x %s %s\n", key, quoted)
-	fmt.Fprintf(b, "    test (string join : $%s | string collect --allow-empty) = %s\n", key, quoted)
+	// Fish 3.7 drops an empty command substitution even when string collect is
+	// passed --allow-empty. Normalize that case explicitly before comparing;
+	// string join also reconstructs variables Fish represents as path lists.
+	// Its option terminator keeps a leading-hyphen value from becoming a flag.
+	fmt.Fprintf(b, "    set -l _vaultctx_actual (string join -- : $%s)\n", key)
+	fmt.Fprintln(b, "    set -q _vaultctx_actual[1]")
+	fmt.Fprintln(b, "    or set _vaultctx_actual ''")
+	fmt.Fprintf(b, "    test \"$_vaultctx_actual\" = %s\n", quoted)
 	fmt.Fprintln(b, "    or break")
 }
 
