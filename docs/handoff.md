@@ -6,6 +6,19 @@ new Astra session; implementation was paused for that handoff.
 
 ## Start here
 
+Resume update (2026-09-05): the EPERM cause is now reproduced and fixed in the
+working tree on the existing branch. An unsandboxed `ps` diagnostic showed the
+leader in `Z` state before the final group SIGKILL returned EPERM. Darwin's
+`killpg1` skips zombies. The fix accepts that signal error only on Darwin and
+only after successful direct-child cleanup, reap, and independent quiescence
+confirmation. Linux EPERM handling is unchanged. Pending exit notifications
+are now consumed before `Wait` to avoid a Linux `waitid(WNOWAIT)`/reap race.
+Focused cancellation and refused-delivery/active-descendant regressions pass;
+`make fmt-check vet test race` passed before the final status-37 test extension.
+Repeated verification, cross-builds, independent reviews, and CI for the new
+source are still pending. The historical checkpoint details below remain for
+comparison and will be replaced by final evidence as this session completes.
+
 The MVP is feature-complete, but **the current checkpoint is not ready to
 merge or release**. The latest observer-cleanup changes fix the focused
 observer-error cases but introduce a reproducible macOS cancellation failure.

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -214,13 +215,13 @@ func TestExecObserverFailureSurfacesCleanupFailure(t *testing.T) {
 	}{
 		{
 			name:   "group signal",
-			detail: "operation not permitted",
+			detail: "input/output error",
 			configure: func(t *testing.T) {
 				originalSignal := signalProcess
 				signalProcess = func(pid int, signal syscall.Signal) error {
 					err := originalSignal(pid, signal)
 					if pid < 0 && signal == syscall.SIGKILL {
-						return syscall.EPERM
+						return syscall.EIO
 					}
 					return err
 				}
@@ -273,6 +274,106 @@ func TestExecObserverFailureSurfacesCleanupFailure(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestExecGroupSignalEPERMRequiresQuiescence(t *testing.T) {
+	for _, observerFailure := range []bool{false, true} {
+		for _, state := range []string{"quiescent", "live descendant", "probe failure", "permission probe"} {
+			t.Run(fmt.Sprintf("observer_failure=%t/%s", observerFailure, state), func(t *testing.T) {
+				ready := filepath.Join(t.TempDir(), "ready")
+				mode := "linger"
+				if state == "live descendant" {
+					mode = "spawn-descendant"
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				originalObserver := observeProcessExit
+				observeProcessExit = func(pid int) (<-chan error, func(), error) {
+					if !waitForPath(ready, 2*time.Second) {
+						return nil, nil, errors.New("helper did not become ready")
+					}
+					cancel()
+					if observerFailure {
+						return nil, nil, errors.New("injected EPERM observer failure")
+					}
+					return originalObserver(pid)
+				}
+				t.Cleanup(func() { observeProcessExit = originalObserver })
+
+				originalSignal := signalProcess
+				signalProcess = func(pid int, sig syscall.Signal) error {
+					// Refuse delivery entirely: unlike the old diagnostic test,
+					// this leaves a real descendant alive after the leader dies.
+					if pid < 0 {
+						return syscall.EPERM
+					}
+					return originalSignal(pid, sig)
+				}
+				t.Cleanup(func() { signalProcess = originalSignal })
+				originalInspection := inspectProcessGroup
+				inspectProcessGroup = func(pid int) (bool, error) {
+					switch state {
+					case "probe failure":
+						return false, syscall.EIO
+					case "permission probe":
+						// Both platform probes treat EPERM as possibly active.
+						return true, nil
+					default:
+						return originalInspection(pid)
+					}
+				}
+				t.Cleanup(func() { inspectProcessGroup = originalInspection })
+				t.Cleanup(func() {
+					if state != "live descendant" {
+						return
+					}
+					data, _ := os.ReadFile(ready)
+					fields := strings.Fields(string(data))
+					if len(fields) == 2 {
+						pid, _ := strconv.Atoi(fields[0])
+						group, _ := strconv.Atoi(fields[1])
+						if pid > 0 && group > 0 {
+							if actual, err := syscall.Getpgid(pid); err == nil && actual == group {
+								_ = syscall.Kill(pid, syscall.SIGKILL)
+							}
+						}
+					}
+				})
+
+				testApp := newExecHelperApplication(t, mode, ready)
+				done := make(chan int, 1)
+				go func() { done <- testApp.app.Execute(ctx, execHelperCommand()) }()
+				wantIncomplete := state != "quiescent" || runtime.GOOS != "darwin"
+				wantCode := 130
+				if observerFailure || wantIncomplete {
+					wantCode = 1
+				}
+				select {
+				case code := <-done:
+					if code != wantCode {
+						t.Fatalf("exit code = %d, want %d; stderr=%s", code, wantCode, testApp.errOut.String())
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("failed group signal cleanup did not return")
+				}
+				stderr := testApp.errOut.String()
+				if got := strings.Contains(stderr, errProcessCleanupIncomplete.Error()); got != wantIncomplete {
+					t.Fatalf("incomplete cleanup = %t, want %t; stderr=%s", got, wantIncomplete, stderr)
+				}
+				if observerFailure && !strings.Contains(stderr, "injected EPERM observer failure") {
+					t.Fatalf("observer diagnostic lost: %s", stderr)
+				}
+				if state == "live descendant" {
+					before := waitForHelperFile(t, ready+".descendant")
+					time.Sleep(50 * time.Millisecond)
+					after := waitForHelperFile(t, ready+".descendant")
+					if string(before) == string(after) {
+						t.Fatal("refused group signal did not leave a live heartbeat descendant")
+					}
+				}
+			})
+		}
 	}
 }
 

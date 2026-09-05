@@ -136,17 +136,27 @@ func TestManagedCommandHandlesFastDarwinChildren(t *testing.T) {
 }
 
 func TestManagedCommandPreservesExitStatusAfterDarwinRegistrationRace(t *testing.T) {
-	installRegistrationRaceKevent(t, nil)
+	for _, canceled := range []bool{false, true} {
+		t.Run(strconv.FormatBool(canceled), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var afterExit func()
+			if canceled {
+				afterExit = cancel
+			}
+			installRegistrationRaceKevent(t, afterExit)
 
-	command := exec.Command(os.Args[0], "-test.run=^TestVaultctxExecProcessHelper$")
-	command.Env = helperEnvironment(os.Environ(), "exit:37", "")
-	err := runManagedCommand(context.Background(), command)
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		t.Fatalf("runManagedCommand() error = %v, want exit status 37", err)
-	}
-	if got := managedExitCode(exitErr); got != 37 {
-		t.Fatalf("runManagedCommand() exit status = %d, want 37", got)
+			command := exec.Command(os.Args[0], "-test.run=^TestVaultctxExecProcessHelper$")
+			command.Env = helperEnvironment(os.Environ(), "exit:37", "")
+			err := runManagedCommand(ctx, command)
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				t.Fatalf("runManagedCommand() error = %v, want exit status 37", err)
+			}
+			if got := managedExitCode(exitErr); got != 37 {
+				t.Fatalf("runManagedCommand() exit status = %d, want 37", got)
+			}
+		})
 	}
 }
 

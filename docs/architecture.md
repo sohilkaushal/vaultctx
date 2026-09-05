@@ -132,10 +132,17 @@ cancellation has already arrived when an exit notification is consumed, the
 unreaped leader continues to reserve the process-group ID while vaultctx
 terminates and confirms the group; the leader's real wait result is retained.
 Registration and retrieval failures take the same signal-before-reap path,
-confirm group quiescence, and retain the observer diagnostic. A failed final
-group signal, unexpected reap result, failed probe, or quiescence timeout is
-reported as incomplete cleanup rather than being masked by concurrent
-cancellation.
+confirm group quiescence, and retain the observer diagnostic. Pending exit
+notifications are consumed before reaping, so Linux's `waitid(WNOWAIT)` observer
+cannot race with `Wait` and spuriously report `ECHILD`. A failed final group
+signal, unexpected reap result, failed probe, or quiescence timeout is reported
+as incomplete cleanup rather than being masked by concurrent cancellation.
+The sole additional signal-error exception is macOS group-SIGKILL `EPERM`:
+Darwin skips zombies during group signaling, so an unreaped, exited leader
+alone can cause that result. It is accepted only after the direct-child
+fallback and reap succeed and a separate probe confirms group quiescence.
+An `EPERM` probe still means potentially active on both primary platforms;
+neither a failed probe nor a live descendant is excused by this exception.
 On other platforms cancellation is direct-child-only, and a deliberately
 daemonized process is outside the portable cleanup policy.
 

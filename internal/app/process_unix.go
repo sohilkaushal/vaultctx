@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -136,7 +137,7 @@ func abortUnmonitoredCommand(cmd *exec.Cmd, dedicatedProcessGroup bool) error {
 	}
 	waitErr := unexpectedWaitError(cmd.Wait())
 	quiescenceErr := confirmProcessGroupQuiescence(processGroupID)
-	return processGroupCleanupError(processGroupID, groupSignalErr, directSignalErr, waitErr, quiescenceErr)
+	return finalProcessGroupCleanupError(processGroupID, groupSignalErr, directSignalErr, waitErr, quiescenceErr)
 }
 
 func commandUsesTerminalStdin(cmd *exec.Cmd) bool {
@@ -168,14 +169,27 @@ func terminateProcessGroup(cmd *exec.Cmd, gracefulSignal syscall.Signal, pending
 	if groupSignalErr != nil {
 		directSignalErr = unexpectedSignalError("kill direct child after group signal failure", cmd.Process.Kill())
 	}
-	waitErr = cmd.Wait()
 	if pendingExit != nil {
+		// Linux observes exit with waitid(WNOWAIT). Consume that result before
+		// Wait reaps the child, or the observer can spuriously report ECHILD.
 		observerErr = <-pendingExit
 	}
+	waitErr = cmd.Wait()
 	waitCleanupErr := unexpectedWaitError(waitErr)
 	quiescenceErr := confirmProcessGroupQuiescence(processGroupID)
-	cleanupErr = processGroupCleanupError(processGroupID, groupSignalErr, directSignalErr, waitCleanupErr, quiescenceErr)
+	cleanupErr = finalProcessGroupCleanupError(processGroupID, groupSignalErr, directSignalErr, waitCleanupErr, quiescenceErr)
 	return waitErr, observerErr, cleanupErr
+}
+
+func finalProcessGroupCleanupError(processGroupID int, groupSignalErr, directSignalErr, waitErr, quiescenceErr error) error {
+	// Darwin's group-signal path skips zombies and can return EPERM for an
+	// unreaped, exited leader alone. EPERM is not itself proof of exit: accept
+	// it only after successful reaping and independent group quiescence. Keep
+	// all other signal errors, and never relax EPERM from the group probe.
+	if runtime.GOOS == "darwin" && errors.Is(groupSignalErr, syscall.EPERM) && directSignalErr == nil && waitErr == nil && quiescenceErr == nil {
+		groupSignalErr = nil
+	}
+	return processGroupCleanupError(processGroupID, groupSignalErr, directSignalErr, waitErr, quiescenceErr)
 }
 
 func confirmProcessGroupQuiescence(processGroupID int) error {
