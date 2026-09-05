@@ -9,15 +9,21 @@ release-stamped**. PR #1 merged the agent handoff and Linux process-lifecycle
 fixes to `main` as `94cf22d`. Its Go, race, macOS/Linux, and CodeQL checks
 passed, but both mandatory `shell-integration` runs failed on Fish 3.7.0.
 
-Work is now on `codex/fix-fish-shell-integration`. The Fish activation guard no
-longer relies on an empty command substitution that Fish 3.7 drops, and it uses
-an explicit option terminator so a leading-hyphen value cannot be interpreted
-as a `string join` flag. The exact Fish 3.7 failure has been reproduced locally
-in an Ubuntu 24.04 container and the corrected real-shell suite passes. The
-post-edit local full/race/shuffled gates, cross-build matrix, and isolated CLI
-smoke are green. Fresh independent standards/spec reviews found no P1/P2 code
-or behavior issue and approved the change for PR. A green follow-up PR CI run
-is still required.
+Work is now on `codex/fix-fish-shell-integration` in PR #2. The Fish activation
+guard no longer relies on an empty command substitution that Fish 3.7 drops,
+and it uses an explicit option terminator so a leading-hyphen value cannot be
+interpreted as a `string join` flag. Both PR #2 `shell-integration` runs now
+pass, including Fish and PowerShell.
+
+Those runs exposed a separate macOS fast-child race already present on merged
+`main`: `env` or `true` could exit between `cmd.Start` and registration of its
+kqueue `NOTE_EXIT` filter. Registration then returned `ESRCH`, which vaultctx
+reported as an execution failure instead of reaping the child for its real
+status. The local fix treats only registration-time `ESRCH` as an already-exited
+child notification; all other registration errors and every retrieval error
+remain fail-closed. The post-fix full/race/shuffled gates, lifecycle stress,
+cross-build matrix, and isolated CLI stress smoke are green. Fresh independent
+review and a green PR #2 rerun on the combined tree are still required.
 
 The earlier Linux CI failure in process-group cleanup was reproduced and
 fixed: killed orphan descendants can remain as zombies when the host PID 1
@@ -93,7 +99,54 @@ real-shell CI job:
   universal-variable shadowing, a colon-separated path value, a leading-hyphen
   value, and native command failure propagation.
 
+PR #2 confirmed that fix: both independent `shell-integration` runs passed.
+The same workflow then exposed a macOS observer race in fast successful
+commands:
+
+- A direct child can exit after `cmd.Start` but before kqueue `EV_ADD` attaches
+  its one-shot `NOTE_EXIT` filter. macOS reports `ESRCH` for that attach race.
+- The child is still unreaped at that point, so the PID cannot have been reused.
+  The observer now returns an immediately ready successful notification and
+  lets `cmd.Wait` recover the real exit status.
+- The exception is deliberately restricted to the registration call. An
+  injected retrieval-time `ESRCH` and other registration failures still surface
+  as observer errors.
+- Darwin-only tests inject all three paths and stress 100 fast real children per
+  test invocation.
+
 ## Verification evidence
+
+Current working-tree checks after the Darwin observer fix:
+
+```text
+make fmt-check
+make vet
+make test
+make race
+PASS
+
+go test ./... -shuffle=on -count=20
+PASS
+
+go test ./internal/app -run 'Test(ProcessExitNotification|ManagedCommandHandlesFastDarwinChildren)$' -count=100
+PASS (10,000 real fast-child starts plus injected observer paths)
+
+go test ./internal/app -run 'Test(ExecCredentialModesAndExitCode|ExecUsesFreshTokenHelperBlockerAndFailsClosedOnEntropyError|ExecNoticeNamesAmbientTransportWithoutLeakingValues)$' -count=500
+PASS
+
+go test ./internal/app -run 'Test(ExecObserverFailureTerminatesChild|ExecCancellationTerminatesChildProcessGroup|ExecCancellationPreservesSignalCause|CanceledMutationDoesNotCommit|CanceledActivationDoesNotEmitScript)$' -count=50
+PASS
+
+go test ./internal/app -run '^TestExecCancellationKillsSameGroupDescendants$' -count=300
+PASS
+```
+
+All nine CGO-disabled CLI cross-builds passed, and Darwin amd64/arm64 plus
+Linux amd64 `internal/app` test binaries compiled. A fresh isolated CLI stress
+smoke ran 600 fast successful `exec` commands across all token modes with zero
+observer/cleanup errors, preserved a child exit status of 37, verified guarded
+credential clearing without canary leakage, and completed `doctor` with zero
+errors plus the documented macOS ACL warning.
 
 Current working-tree checks after the final Fish renderer edit:
 
@@ -132,10 +185,9 @@ clearing with fake canaries, and `doctor`. Standard output remained
 machine-safe, no canary values appeared in diagnostics, and `doctor` reported
 zero errors plus only the documented macOS extended-ACL warning.
 
-The cancellation/observer suite passed 50 repetitions and same-group
-descendant cleanup passed 300 repetitions immediately before the final
-Fish-only edit. Process lifecycle code and tests did not change afterward; the
-complete test/race/shuffled gates were rerun after the Fish edit.
+The earlier Fish-only checkpoint included 50 cancellation/observer repetitions
+and 300 same-group descendant-cleanup repetitions. Both suites were rerun after
+the Darwin observer edit; the current evidence above supersedes that checkpoint.
 
 Current-tree checks completed after the `EPERM` fix:
 
@@ -192,8 +244,8 @@ The first post-review complete gate exposed the Linux zombie-only group failure
 during `make test`; that attempt did not reach `make race`. The required full
 gate and the formerly stale focused/smoke gates are now green. Fish and
 PowerShell are not installed directly on this host. Fish 3.7 was exercised in
-the disposable Linux container described above; PowerShell must still pass in
-the follow-up PR's mandatory `shell-integration` job.
+the disposable Linux container described above, and both Fish and PowerShell
+passed in PR #2's `shell-integration` jobs.
 
 ## Remaining release checklist
 
@@ -201,13 +253,15 @@ If source changes again, rerun the complete release gate with sandbox-writable,
 task-specific caches before relying on any evidence above. Otherwise, the next
 agent should:
 
-1. Push the branch, open the follow-up PR, and require the complete CI workflow,
-   especially Fish and PowerShell `shell-integration`, to pass.
-2. Add `docs/review-report.md` with exact current-tree review, local, and CI
+1. Commit the Darwin observer fix and obtain fresh independent stop-ship review
+   on the combined tree.
+2. Push the update to PR #2 and require the complete CI workflow to pass on the
+   new head. The earlier Fish/PowerShell jobs are green but predate this fix.
+3. Add `docs/review-report.md` with exact current-tree review, local, and CI
    evidence plus caveats.
-3. Build a fresh `v0.1.0` candidate and checksum only after the last source
+4. Build a fresh `v0.1.0` candidate and checksum only after the last source
    change. Do not overwrite or ship the stale `bin/vaultctx` beforehand.
-4. Ask the owner to choose a license before any public release or external
+5. Ask the owner to choose a license before any public release or external
    contribution workflow. Do not infer that legal choice.
 
 ## Environment and release caveats
@@ -236,6 +290,8 @@ agent should:
   no scope creep, and no lifecycle/doctor regression, and returned `SHIP` for
   the change to proceed to PR CI. The standards reviewer found one P3 stale
   checklist line in this document; the current docs-only follow-up removes it.
+- Those reviews predate the Darwin observer edit discovered by PR #2 and do not
+  approve that new stop-ship lifecycle change. A fresh review is required.
 - A separate release reading remains `DO NOT SHIP` for public publication until
   mandatory Fish/PowerShell CI, the review report, fresh candidate, and license
   decision are complete. That is a release-state gate, not a code finding.
