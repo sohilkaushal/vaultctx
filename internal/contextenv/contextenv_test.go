@@ -729,7 +729,7 @@ func TestRenderedShellPlansFailFastAndCommitMetadataLast(t *testing.T) {
 					t.Errorf("final POSIX operation has a dangling chain: %q", lines[len(lines)-1])
 				}
 			case "fish":
-				for _, fragment := range []string{"begin\n", "  set -l _vaultctx_apply_status 1\n", "  while true\n", "    set -gx VAULTCTX_CONTEXT ''\n", "    set -x VAULTCTX_CONTEXT ''\n", "    set -gx VAULT_ADDR 'https://vault.example'\n", "    set -x VAULT_ADDR 'https://vault.example'\n", "string collect --allow-empty", "    or break\n", "    set _vaultctx_apply_status 0\n", "  test \"$_vaultctx_apply_status\" -eq 0\n", "end\n"} {
+				for _, fragment := range []string{"begin\n", "  set -l _vaultctx_apply_status 1\n", "  while true\n", "    set -gx VAULTCTX_CONTEXT ''\n", "    set -x VAULTCTX_CONTEXT ''\n", "    set -gx VAULT_ADDR 'https://vault.example'\n", "    set -x VAULT_ADDR 'https://vault.example'\n", "    set -l _vaultctx_actual (string join -- : $VAULTCTX_CONTEXT)\n", "    set -q _vaultctx_actual[1]\n", "    or set _vaultctx_actual ''\n", "    test \"$_vaultctx_actual\" = ''\n", "    or break\n", "    set _vaultctx_apply_status 0\n", "  test \"$_vaultctx_apply_status\" -eq 0\n", "end\n"} {
 					if !strings.Contains(script, fragment) {
 						t.Errorf("fish plan is missing guarded status fragment %q:\n%s", fragment, script)
 					}
@@ -825,7 +825,7 @@ func TestFishShellInitPropagatesNativeFailureAndHandlesMissingVariables(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	activation, err := Script(config.Context{Address: "https://new.example"}, "fish", false, "prod", "", "")
+	activation, err := Script(config.Context{Address: "https://new.example", Namespace: "-q", CAPath: "/first:/second"}, "fish", false, "prod", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -881,6 +881,8 @@ set -e VAULTCTX_PREVIOUS_FINGERPRINT
 vctx prod
 and test "$VAULT_ADDR" = 'https://new.example'
 and test "$VAULTCTX_CONTEXT" = prod
+and test (string join : $VAULT_CAPATH) = '/first:/second'
+and test "$VAULT_NAMESPACE" = '-q'
 `
 		command := exec.Command(fish, "-c", commandText)
 		command.Env = environmentWithOverrides(os.Environ(), map[string]string{
