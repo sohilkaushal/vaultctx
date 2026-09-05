@@ -15,8 +15,9 @@ an explicit option terminator so a leading-hyphen value cannot be interpreted
 as a `string join` flag. The exact Fish 3.7 failure has been reproduced locally
 in an Ubuntu 24.04 container and the corrected real-shell suite passes. The
 post-edit local full/race/shuffled gates, cross-build matrix, and isolated CLI
-smoke are green. Fresh independent review and a green follow-up PR CI run are
-still required.
+smoke are green. Fresh independent standards/spec reviews found no P1/P2 code
+or behavior issue and approved the change for PR. A green follow-up PR CI run
+is still required.
 
 The earlier Linux CI failure in process-group cleanup was reproduced and
 fixed: killed orphan descendants can remain as zombies when the host PID 1
@@ -200,17 +201,13 @@ If source changes again, rerun the complete release gate with sandbox-writable,
 task-specific caches before relying on any evidence above. Otherwise, the next
 agent should:
 
-1. Commit the Fish fix and this handoff update.
-2. Obtain fresh independent `SHIP` verdicts on the committed tree, asking the
-   reviewers to recheck the Fish renderer as well as process-group quiescence
-   and doctor portability.
-3. Push the branch, open the follow-up PR, and require the complete CI workflow,
+1. Push the branch, open the follow-up PR, and require the complete CI workflow,
    especially Fish and PowerShell `shell-integration`, to pass.
-4. Add `docs/review-report.md` with exact current-tree review, local, and CI
+2. Add `docs/review-report.md` with exact current-tree review, local, and CI
    evidence plus caveats.
-5. Build a fresh `v0.1.0` candidate and checksum only after the last source
+3. Build a fresh `v0.1.0` candidate and checksum only after the last source
    change. Do not overwrite or ship the stale `bin/vaultctx` beforehand.
-6. Ask the owner to choose a license before any public release or external
+4. Ask the owner to choose a license before any public release or external
    contribution workflow. Do not infer that legal choice.
 
 ## Environment and release caveats
@@ -230,11 +227,18 @@ agent should:
 ## Review history
 
 - Implementation/security reviewer: issued `SHIP` with no P1/P2 findings on
-  the tree before the latest two fixes. That verdict is stale and must be
-  renewed.
+  the tree before the latest two fixes. That stale verdict is superseded by the
+  fresh reviews below.
 - Final-quality reviewer: issued `DO NOT SHIP` for the process-group and doctor
-  portability P2s above. Both are merged and locally verified, but a current
-  reviewer has not yet restamped the complete Fish-fix tree.
+  portability P2s above. Both are merged and locally verified.
+- Fresh standards and specification reviewers inspected source commit
+  `6ba6285` against merged `main`. They found no P1/P2 implementation issue,
+  no scope creep, and no lifecycle/doctor regression, and returned `SHIP` for
+  the change to proceed to PR CI. The standards reviewer found one P3 stale
+  checklist line in this document; the current docs-only follow-up removes it.
+- A separate release reading remains `DO NOT SHIP` for public publication until
+  mandatory Fish/PowerShell CI, the review report, fresh candidate, and license
+  decision are complete. That is a release-state gate, not a code finding.
 
 No agent should collapse this history into an unconditional release approval
 until the remaining release checklist is complete.
