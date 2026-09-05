@@ -143,6 +143,12 @@ alone can cause that result. It is accepted only after the direct-child
 fallback and reap succeed and a separate probe confirms group quiescence.
 An `EPERM` probe still means potentially active on both primary platforms;
 neither a failed probe nor a live descendant is excused by this exception.
+The observer-before-reap ordering also applies to terminal-attached children.
+If direct-child SIGKILL is refused, waiting for exit is limited to one second
+before reporting incomplete cleanup; group probing has its own one-second
+bound. A background waiter retains responsibility for the child's eventual
+reap and never sends another signal. This error path cannot promise that a
+signal-denied child has stopped.
 On other platforms cancellation is direct-child-only, and a deliberately
 daemonized process is outside the portable cleanup policy.
 

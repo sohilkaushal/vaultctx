@@ -19,6 +19,17 @@ Repeated verification, cross-builds, independent reviews, and CI for the new
 source are still pending. The historical checkpoint details below remain for
 comparison and will be replaced by final evidence as this session completes.
 
+Independent Standards and Specification reviews of `9b7c3ff` both withheld
+approval for two P2 findings: the terminal-child path still reaped before its
+pending Linux observer, and refused group plus direct-child SIGKILL could
+block cleanup indefinitely. Both are fixed in the working tree: shared
+observer-before-reap waiting covers direct children, and a failed direct kill
+gets a one-second exit-wait bound plus an eventual background reaper that
+never signals. Adversarial tests cover both delivery refusals in cancellation
+and observer-error paths, and delayed Linux observation after SIGKILL.
+The earlier shuffle x20, nine cross-builds, Linux lifecycle x20, and full/race
+passes apply to `9b7c3ff`; fresh verification and reviewer restamps are pending.
+
 The MVP is feature-complete, but **the current checkpoint is not ready to
 merge or release**. The latest observer-cleanup changes fix the focused
 observer-error cases but introduce a reproducible macOS cancellation failure.

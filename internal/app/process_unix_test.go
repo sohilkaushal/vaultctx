@@ -399,6 +399,78 @@ func TestExecCancellationTerminatesChildProcessGroup(t *testing.T) {
 	}
 }
 
+func TestCleanupReportsRefusedGroupAndDirectSignals(t *testing.T) {
+	for _, path := range []string{"group cancellation", "direct cancellation", "group observer failure", "direct observer failure"} {
+		t.Run(path, func(t *testing.T) {
+			ready := filepath.Join(t.TempDir(), "ready")
+			cmd := exec.Command(os.Args[0], "-test.run=^TestVaultctxExecProcessHelper$")
+			cmd.Env = helperEnvironment(os.Environ(), "linger", ready)
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_ = cmd.Process.Kill()
+				// The bounded failure path retains the one eventual reaper.
+				deadline := time.Now().Add(3 * time.Second)
+				for time.Now().Before(deadline) {
+					if errors.Is(syscall.Kill(cmd.Process.Pid, 0), syscall.ESRCH) {
+						return
+					}
+					time.Sleep(5 * time.Millisecond)
+				}
+				t.Error("background cleanup did not reap the released child")
+			})
+			waitForHelperFile(t, ready)
+
+			originalSignal, originalKill := signalProcess, killDirectProcess
+			signalProcess = func(int, syscall.Signal) error { return syscall.EPERM }
+			killDirectProcess = func(*os.Process) error { return syscall.EPERM }
+			t.Cleanup(func() { signalProcess, killDirectProcess = originalSignal, originalKill })
+			observerFailure := strings.HasSuffix(path, "observer failure")
+			var exited <-chan error
+			if !observerFailure {
+				var closeObserver func()
+				var err error
+				exited, closeObserver, err = processExitNotification(cmd.Process.Pid)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer closeObserver()
+			}
+			done := make(chan error, 1)
+			go func() {
+				switch path {
+				case "group cancellation":
+					_, _, err := terminateProcessGroup(cmd, syscall.SIGTERM, exited)
+					done <- err
+				case "direct cancellation":
+					done <- terminateDirectProcess(cmd, syscall.SIGTERM, exited)
+				default:
+					done <- abortAfterObserverFailure(cmd, strings.HasPrefix(path, "group"), errors.New("injected double-refusal observer failure"))
+				}
+			}()
+			select {
+			case err := <-done:
+				if !errors.Is(err, errProcessCleanupIncomplete) || !strings.Contains(err.Error(), "direct child exit unconfirmed") {
+					t.Fatalf("refused signal error = %v", err)
+				}
+				if observerFailure && !strings.Contains(err.Error(), "injected double-refusal observer failure") {
+					t.Fatalf("observer diagnostic lost: %v", err)
+				}
+			case <-time.After(4 * time.Second):
+				t.Fatal("refused group and direct SIGKILL left cleanup blocked")
+			}
+			before := waitForHelperFile(t, ready)
+			time.Sleep(50 * time.Millisecond)
+			after := waitForHelperFile(t, ready)
+			if string(before) == string(after) {
+				t.Fatal("signal refusal did not leave the child alive")
+			}
+		})
+	}
+}
+
 func TestExecCancellationPreservesSignalCause(t *testing.T) {
 	testCases := []struct {
 		name       string
