@@ -327,7 +327,7 @@ func TestVaultctxExecProcessHelper(t *testing.T) {
 		}
 		fmt.Fprintln(os.Stdout, "vaultctx-pty-ok")
 		os.Exit(0)
-	case mode == "spawn-descendant":
+	case mode == "spawn-descendant" || strings.HasPrefix(mode, "spawn-descendant-exit:"):
 		ready := os.Getenv(execHelperReady)
 		descendantReady := ready + ".descendant"
 		descendant := exec.Command(os.Args[0], "-test.run=^TestVaultctxExecProcessHelper$")
@@ -343,6 +343,14 @@ func TestVaultctxExecProcessHelper(t *testing.T) {
 		if err := writeHelperFile(ready, []byte(state)); err != nil {
 			_ = descendant.Process.Kill()
 			os.Exit(125)
+		}
+		if strings.HasPrefix(mode, "spawn-descendant-exit:") {
+			code, err := strconv.Atoi(strings.TrimPrefix(mode, "spawn-descendant-exit:"))
+			if err != nil {
+				_ = descendant.Process.Kill()
+				os.Exit(125)
+			}
+			os.Exit(code)
 		}
 		for {
 			time.Sleep(time.Hour)

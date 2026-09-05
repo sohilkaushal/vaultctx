@@ -127,9 +127,12 @@ work. macOS observes child exit with a one-shot kqueue process filter. If a
 fast child exits between `Start` and filter registration, registration can
 return `ESRCH`; because the direct child is still unreaped, its PID cannot have
 been reused, so the caller proceeds to `Wait` for the real status. Other
-registration errors and every retrieval error remain fail-closed. On other
-platforms cancellation is direct-child-only, and a deliberately daemonized
-process is outside the portable cleanup policy.
+registration errors and every retrieval error remain fail-closed. If context
+cancellation has already arrived when an exit notification is consumed, the
+unreaped leader continues to reserve the process-group ID while vaultctx
+terminates and confirms the group; the leader's real wait result is retained.
+On other platforms cancellation is direct-child-only, and a deliberately
+daemonized process is outside the portable cleanup policy.
 
 ## Future design constraints
 

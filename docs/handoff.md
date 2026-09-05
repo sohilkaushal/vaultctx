@@ -22,8 +22,16 @@ reported as an execution failure instead of reaping the child for its real
 status. The local fix treats only registration-time `ESRCH` as an already-exited
 child notification; all other registration errors and every retrieval error
 remain fail-closed. The post-fix full/race/shuffled gates, lifecycle stress,
-cross-build matrix, and isolated CLI stress smoke are green. Fresh independent
-review and a green PR #2 rerun on the combined tree are still required.
+cross-build matrix, and isolated CLI stress smoke were green.
+
+Fresh review then caught a cancellation intersection on that new path: an exit
+notification consumed after context cancellation could preserve the leader's
+status but skip cleanup of a still-running same-group descendant. A
+deterministic Darwin regression reproduced the leak, and the current working
+tree now cleans and confirms the group before reaping the leader while retaining
+its real wait result. The complete post-edit gates, lifecycle stress, cross-build
+matrix, and targeted restamp are green. A fresh two-axis review of the committed
+tree and a green PR #2 rerun on that head are still required.
 
 The earlier Linux CI failure in process-group cleanup was reproduced and
 fixed: killed orphan descendants can remain as zombies when the host PID 1
@@ -114,7 +122,73 @@ commands:
 - Darwin-only tests inject all three paths and stress 100 fast real children per
   test invocation.
 
+The fresh specification review identified one P1 in the first observer fix:
+
+- When cancellation and the immediately ready exit notification coincided,
+  either select path could consume the notification and return `cmd.Wait`
+  without invoking process-group cleanup. A fast leader that left a same-group
+  descendant could therefore let that descendant outlive canceled `exec`.
+- `finishObservedCommand` now checks for cancellation before reaping. For a
+  dedicated group, it sends the normal graceful/SIGKILL sequence and confirms
+  quiescence while the unreaped leader still prevents process-group ID reuse.
+  It then returns the leader's original wait result.
+- `runExec` gives incomplete cleanup first priority, then preserves a real child
+  exit status, and treats remaining cancellation errors as cancellation. The
+  same race therefore returns the independently completed leader's status to
+  the operator without weakening cleanup failures.
+- The Darwin regression uses a real kqueue to wait for the helper leader to
+  exit, substitutes registration-time `ESRCH`, cancels the context, and verifies
+  user-visible status 37, a stopped heartbeat, and a quiescent process group. A
+  separate injected test deterministically preserves exit status 37 without
+  cancellation. The wait is bounded, and failure cleanup verifies the recorded
+  PID still belongs to the expected group before signaling it.
+
 ## Verification evidence
+
+The cancellation intersection was reproduced before its implementation fix:
+
+```text
+go test ./internal/app -run 'TestManagedCommand(PreservesExitStatusAfterDarwinRegistrationRace|CleansDescendantWhenDarwinRegistrationRaceIsCanceled)$' -count=1
+FAIL: process group still has runnable descendants after canceled registration race
+```
+
+The first cleanup fix made that direct regression pass 100 repetitions. The
+expanded end-to-end assertion then exposed the status-mapping layer:
+
+```text
+go test ./internal/app -run '^TestManagedCommandCleansDescendantWhenDarwinRegistrationRaceIsCanceled$' -count=1
+FAIL: canceled registration race exit code = 130, want preserved child status 37
+```
+
+After the final fix, the frozen-tree release gate passed:
+
+```text
+make fmt-check
+PASS (0.03s)
+
+make vet
+PASS (2.12s)
+
+make test
+PASS (4.60s)
+
+make race
+PASS (10.12s)
+
+go test ./... -shuffle=on -count=20
+PASS (72.22s)
+
+go test ./internal/app -run 'TestManagedCommand(PreservesExitStatusAfterDarwinRegistrationRace|CleansDescendantWhenDarwinRegistrationRaceIsCanceled)$' -count=100
+PASS (43.35s)
+
+go test ./internal/app -run 'Test(ProcessExitNotificationAcceptsChildExitedBeforeRegistration|ProcessExitNotificationRejectsOtherRegistrationFailures|ProcessExitNotificationRejectsRetrievalNoSuchProcess|ManagedCommandPreservesExitStatusAfterDarwinRegistrationRace|ManagedCommandCleansDescendantWhenDarwinRegistrationRaceIsCanceled|ExecObserverFailureTerminatesChild|ExecCancellationTerminatesChildProcessGroup|ExecCancellationPreservesSignalCause|ExecCancellationKillsSameGroupDescendants)$' -count=50
+PASS (101.63s)
+```
+
+The six monitored source/document hashes were identical before and after that
+gate. All nine CGO-disabled CLI builds and Darwin amd64/arm64 plus Linux amd64
+`internal/app` test-binary compiles also passed on the frozen tree. The targeted
+Darwin race suite passed under the race detector 20 repetitions (9.875s).
 
 Current working-tree checks after the Darwin observer fix:
 
@@ -253,8 +327,8 @@ If source changes again, rerun the complete release gate with sandbox-writable,
 task-specific caches before relying on any evidence above. Otherwise, the next
 agent should:
 
-1. Commit the Darwin observer fix and obtain fresh independent stop-ship review
-   on the combined tree.
+1. Commit the cancellation-intersection fix and obtain fresh independent
+   Standards and Specification reviews on that fixed point.
 2. Push the update to PR #2 and require the complete CI workflow to pass on the
    new head. The earlier Fish/PowerShell jobs are green but predate this fix.
 3. Add `docs/review-report.md` with exact current-tree review, local, and CI
@@ -292,6 +366,17 @@ agent should:
   checklist line in this document; the current docs-only follow-up removes it.
 - Those reviews predate the Darwin observer edit discovered by PR #2 and do not
   approve that new stop-ship lifecycle change. A fresh review is required.
+- Standards review of `b0dbb69` returned `SHIP` with no P1/P2 finding. It found
+  P3 gaps in deterministic exit-status coverage and this handoff's stale
+  checklist wording; both are addressed in the current working tree.
+- Specification review of `b0dbb69` returned `DO NOT SHIP` for the P1
+  cancellation/ready-exit cleanup bypass described above. The deterministic
+  regression first failed and now passes.
+- A targeted post-fix reviewer found no P0-P3 issue and returned `SHIP` after
+  verifying signal-before-reap ordering, consumed-notification handling,
+  user-visible exit status, bounded/PID-safe tests, and architecture accuracy.
+  The full post-edit gate is green. Independent final Standards and
+  Specification reviews remain required on the committed fixed point.
 - A separate release reading remains `DO NOT SHIP` for public publication until
   mandatory Fish/PowerShell CI, the review report, fresh candidate, and license
   decision are complete. That is a release-state gate, not a code finding.

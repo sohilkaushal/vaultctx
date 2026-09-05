@@ -134,12 +134,15 @@ func (a *App) runExec(ctx context.Context, args []string) error {
 	cmd.Stdout = a.Out
 	cmd.Stderr = a.Err
 	if err := runManagedCommand(ctx, cmd); err != nil {
-		if ctx.Err() != nil && !errors.Is(err, errProcessCleanupIncomplete) {
-			return ctx.Err()
+		if errors.Is(err, errProcessCleanupIncomplete) {
+			return fmt.Errorf("execute %q: %w", options.command[0], err)
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return &exitStatus{code: managedExitCode(exitErr)}
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 		return fmt.Errorf("execute %q: %w", options.command[0], err)
 	}
