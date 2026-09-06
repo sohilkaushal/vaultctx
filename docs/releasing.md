@@ -6,12 +6,18 @@ archives or new runtime verification results are claimed.
 
 ## Decisions and publication gates
 
-- [ ] Owner chooses a license; add its complete text as `LICENSE` and update
-  the no-license statements in `README.md`, `AGENTS.md`, and `docs/handoff.md`.
-- [ ] Owner supplies a private security contact. Enable and verify GitHub
-  private vulnerability reporting and replace the setup instruction in
-  `SECURITY.md` with the actual reporting route. Do not claim settings were
-  enabled without checking them.
+- [x] Owner selected MIT on 2026-09-06. The complete text is in `LICENSE`,
+  credited to Sohil Kaushal; current licensing statements are updated.
+- [x] Security contact route selected under the owner's delegation: GitHub
+  private vulnerability reporting to the repository maintainer. `SECURITY.md`
+  links to the private form; no personal email is published.
+- [ ] Enable and verify GitHub private vulnerability reporting. The current
+  connector cannot inspect or change this setting. In repository Settings,
+  open Advanced Security, then enable Private vulnerability reporting. Check
+  that Report a vulnerability appears on the repository's Advisories page.
+  Follow [GitHub's setup instructions](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository),
+  including security-alert notifications for the maintainer. Remove the
+  preparation-status paragraph in `SECURITY.md` only after verification.
 - [ ] Review and merge the final release documentation. Update supported
   status in `SECURITY.md` to the intended MVP support policy.
 - [ ] All P1/P2 findings are resolved, with independent review restamps after

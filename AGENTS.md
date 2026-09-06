@@ -113,5 +113,6 @@ tree is green. Record exact commands and results in a review report under
 `docs/`. Do not invent a commit hash, tag, remote, CI result, or reviewer
 approval. A local build is not a published release.
 
-The project intentionally has no license at present. Choosing one is an owner
-decision with legal consequences; agents must not infer or add a license.
+The owner selected the MIT License on 2026-09-06; its text is in `LICENSE`.
+Include it with release archives. Any future license change remains an owner
+decision; agents must not infer a different license.

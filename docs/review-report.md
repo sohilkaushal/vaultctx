@@ -154,7 +154,7 @@ go version -m bin/vaultctx
   notice on stderr; SIGTERM cancellation status 143. The fixture used only
   `https://vault.example`, `/usr/bin/true`, and `/bin/sleep`; no Vault contact.
 
-Public publication still requires the owner's license decision and
-private-reporting setup in `SECURITY.md`. No merge, tag, or public release
+At that checkpoint, public publication still required the owner's license
+decision and private-reporting setup in `SECURITY.md`. No merge, tag, or public release
 artifact was created during that validation session. Evidence-only commits after `5f92942` change neither its
 runtime/tests nor this candidate's reviewed source provenance.

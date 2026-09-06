@@ -14,12 +14,29 @@ use it as the only safeguard around production Vault administrator access.
 
 Do not open a public issue containing tokens, Vault output, internal addresses,
 namespaces, certificate paths, exploit details, or other operational metadata.
-Before publishing this project, configure a private security contact and GitHub
-private vulnerability reporting. Until then, report findings to the repository
-owner through an agreed private channel.
+
+The project's security contact route is GitHub private vulnerability reporting,
+handled by the repository maintainer. Use
+[Report a vulnerability](https://github.com/sohilkaushal/vaultctx/security/advisories/new)
+to open a private report. Keep exploit details and follow-up discussion inside
+that private advisory rather than public issues or pull requests.
+
+**Release preparation status:** enabling this route in repository settings has
+not yet been verified. Public release is blocked until it is enabled and the
+reporting form is available. If the form is unavailable, do not post sensitive
+details publicly; wait for the private route to become available.
+
+Include the affected version or commit, OS and shell versions, expected versus
+actual behavior, impact, and minimal reproduction steps with fake data. Redact
+credentials and operational metadata from any logs or screenshots. A report
+does not need to contain a working exploit to be useful.
 
 Never send a real token as a reproduction. Use a clear canary such as
 `VAULTCTX_TEST_CANARY` against a disposable Vault instance.
+
+The maintainer will assess reports and coordinate fixes and disclosure through
+the private advisory. This MVP offers no guaranteed response or remediation
+time and no bug-bounty commitment.
 
 ## Stop-ship areas
 

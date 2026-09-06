@@ -11,17 +11,30 @@ The documented macOS EPERM failure and subsequent review findings are fixed.
 - [Post-merge CI](https://github.com/sohilkaushal/vaultctx/actions/runs/34003738221)
   passes all six jobs: Linux/macOS stable/oldstable, race, and shell integration.
 - No open issues or PRs were present at the start of release preparation;
-  no GitHub release was published. Repository settings for private reporting
-  have not been verified.
-- This branch updates release documentation only. The runbook is
+  no GitHub release was published.
+- The owner selected MIT on 2026-09-06 and delegated the security-contact
+  choice. `LICENSE` contains MIT with copyright 2026 Sohil Kaushal. The chosen
+  route is GitHub private vulnerability reporting to the repository maintainer;
+  no personal email is published. `SECURITY.md` includes the private form link.
+- The connector cannot inspect or change private-reporting settings. An owner
+  must enable it under Settings > Advanced Security and verify the reporting
+  form, then remove the preparation-status paragraph from `SECURITY.md`.
+- This branch updates licensing and release documentation only. The runbook is
   [releasing.md](releasing.md); the proposed release description is
   [releases/v0.1.0.md](releases/v0.1.0.md).
 - Release archives have not been built. The current Linux preparation host
   has no Go compiler; local checks cover whitespace, Markdown links, and Bash
-  syntax of the packaging recipe. PR CI must supply the current Go gates.
-- Next: obtain the owner's license and private security-contact choices,
-  configure/verify private vulnerability reporting, finalize the release docs,
-  then follow the runbook from the final reviewed commit.
+  syntax of the packaging recipe.
+- [PR #3](https://github.com/sohilkaushal/vaultctx/pull/3) is open. Its initial
+  documentation commit `48cb3423a89942b6ef3138be113c91b9485386c9` passed
+  [PR CI](https://github.com/sohilkaushal/vaultctx/actions/runs/34013263004),
+  [push CI](https://github.com/sohilkaushal/vaultctx/actions/runs/34013243208), and
+  [analysis checks](https://github.com/sohilkaushal/vaultctx/actions/runs/34013261829).
+  The MIT/security-policy follow-up needs its own CI result; the earlier checks
+  do not cover that commit. No runtime code or tests changed.
+- Next: enable/verify private vulnerability reporting, confirm follow-up CI,
+  finalize the release docs, then follow the runbook from the final reviewed
+  commit. The license and security-contact choices are resolved.
 
 ## Historical reviewed checkpoint before merge
 
@@ -83,10 +96,10 @@ descendant's quiescence before removing its temporary directory.
 - Before merge, the GitHub Codex summary was rechecked and still covered
   `adda5bd`. Do not represent it as approval of the new head. No new review
   request comment was sent. Local independent restamps are recorded separately.
-- Public release remains blocked by the absent license (owner decision) and
-  private-reporting setup in `SECURITY.md`. The merge is complete, but the
-  internal candidate is not a release. This preparation creates no license,
-  tag, or public release artifact.
+- MIT is now included on this branch. Public release still requires verified
+  private-reporting setup in `SECURITY.md` and the remaining build/publication
+  gates in `releasing.md`. PR #2 is merged, but the internal candidate is not a
+  release. No tag or public release artifact has been created by this work.
 - Any later stop-ship edit requires fresh gates and independent restamps.
 
 ## Historical validation tooling
@@ -107,4 +120,5 @@ authenticated HTTPS connection succeeded without changing the configured remote:
 git -c credential.helper='!gh auth git-credential' push https://github.com/sohilkaushal/vaultctx.git HEAD:refs/heads/codex/fix-fish-shell-integration
 ```
 
-The project remains standard-library-only, with no license and no `go.sum`.
+That validation session predated the MIT decision. The runtime remains
+standard-library-only, with no `go.sum`.
