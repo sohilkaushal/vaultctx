@@ -1,22 +1,41 @@
 # Session handoff
 
-Last updated: 2026-09-06. Continue on `codex/fix-fish-shell-integration`.
+Last updated: 2026-09-06. Release preparation is on
+`codex/prepare-v0.1.0-release`, based on merged `main` at `453ebae`.
 The documented macOS EPERM failure and subsequent review findings are fixed.
 
-## Current checkpoint
+## Current release preparation
+
+- [PR #2](https://github.com/sohilkaushal/vaultctx/pull/2) merged on
+  2026-09-06 at `453ebae517815695e6ee545e4c905650033326a1`.
+- [Post-merge CI](https://github.com/sohilkaushal/vaultctx/actions/runs/34003738221)
+  passes all six jobs: Linux/macOS stable/oldstable, race, and shell integration.
+- No open issues or PRs were present at the start of release preparation;
+  no GitHub release was published. Repository settings for private reporting
+  have not been verified.
+- This branch updates release documentation only. The runbook is
+  [releasing.md](releasing.md); the proposed release description is
+  [releases/v0.1.0.md](releases/v0.1.0.md).
+- Release archives have not been built. The current Linux preparation host
+  has no Go compiler; local checks cover whitespace, Markdown links, and Bash
+  syntax of the packaging recipe. PR CI must supply the current Go gates.
+- Next: obtain the owner's license and private security-contact choices,
+  configure/verify private vulnerability reporting, finalize the release docs,
+  then follow the runbook from the final reviewed commit.
+
+## Historical reviewed checkpoint before merge
 
 - Reviewed/tested checkpoint: `5f92942a4f79d206bb55e15bf1a45e7eb76a13f7`.
   Runtime code is unchanged from `5c6c3d4`.
-- Verified base: `94cf22d5c92f9a60a683e62be8acbf2da2910abc` (`origin/main`).
+- Verified base at that time: `94cf22d5c92f9a60a683e62be8acbf2da2910abc`.
 - Remote: `git@github.com:sohilkaushal/vaultctx.git`.
-- [PR #2](https://github.com/sohilkaushal/vaultctx/pull/2) remains open. The
-  reviewed checkpoint is pushed; title/body cover Fish and process cleanup.
+- The reviewed checkpoint was pushed to PR #2; it is now merged as noted above.
 - Independent Standards/security and Specification reviewers both restamped
   `5f92942` with no unresolved P1/P2 findings.
 - Full fmt/vet/test/race, shuffled x20, Linux lifecycle x20, adversarial race
   x10, and cross-build gates pass. Both final CI runs pass, including real
   Fish/PowerShell, macOS/Linux stable/oldstable, race, and CodeQL.
-- Fresh internal `v0.1.0` candidate: `bin/vaultctx`, built from clean
+- Historical internal `v0.1.0` candidate: `bin/vaultctx`, built from clean
   `5f92942` after local gates passed; smoke checks pass.
   SHA-256: `cd1561d8191bf2cb6d05055d5013f7d409cca551a886b133f486f27bf2d7f748`.
 - Exact commands, reviews, CI links, and candidate provenance:
@@ -61,15 +80,16 @@ descendant's quiescence before removing its temporary directory.
 
 ## Remaining owner/release decisions
 
-- The GitHub Codex summary was rechecked after the final push and still covers
+- Before merge, the GitHub Codex summary was rechecked and still covered
   `adda5bd`. Do not represent it as approval of the new head. No new review
   request comment was sent. Local independent restamps are recorded separately.
 - Public release remains blocked by the absent license (owner decision) and
-  private-reporting setup in `SECURITY.md`. No merge, tag, license, or public
-  release artifact has been created. The internal candidate is not a release.
+  private-reporting setup in `SECURITY.md`. The merge is complete, but the
+  internal candidate is not a release. This preparation creates no license,
+  tag, or public release artifact.
 - Any later stop-ship edit requires fresh gates and independent restamps.
 
-## Tooling
+## Historical validation tooling
 
 Host: macOS arm64, Go 1.26.6, Bash/Zsh installed. Task caches:
 `GOCACHE=/private/tmp/vaultctx-eperm-gocache` and

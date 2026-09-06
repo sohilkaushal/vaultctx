@@ -1,5 +1,18 @@
 # Process cleanup review and verification
 
+## Post-merge status (2026-09-06)
+
+[PR #2](https://github.com/sohilkaushal/vaultctx/pull/2) is now merged as
+`453ebae517815695e6ee545e4c905650033326a1`.
+[CI on that main commit](https://github.com/sohilkaushal/vaultctx/actions/runs/34003738221)
+passes Linux/macOS stable/oldstable, race, and real-shell integration.
+The evidence below records the pre-merge review and internal candidate; its
+commit and binary checksum are historical and must not be reused as provenance
+for newly built release archives. See [releasing.md](releasing.md) for the
+pending publication steps.
+
+## Historical pre-merge evidence
+
 Completed: 2026-09-06. Reviewed/tested checkpoint:
 `5f92942a4f79d206bb55e15bf1a45e7eb76a13f7`.
 Runtime source is unchanged from `5c6c3d4`.
@@ -143,5 +156,5 @@ go version -m bin/vaultctx
 
 Public publication still requires the owner's license decision and
 private-reporting setup in `SECURITY.md`. No merge, tag, or public release
-artifact was created. Evidence-only commits after `5f92942` change neither its
+artifact was created during that validation session. Evidence-only commits after `5f92942` change neither its
 runtime/tests nor this candidate's reviewed source provenance.

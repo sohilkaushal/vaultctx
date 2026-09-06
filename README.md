@@ -47,6 +47,7 @@ export PATH="$PWD/bin:$PATH"
 ```
 
 Release builds can embed a version with `make build VERSION=v0.1.0`.
+Maintainers preparing a release should follow [the release runbook](docs/releasing.md).
 
 For a persistent per-user installation, copy the binary into a directory that
 is already on your `PATH`, for example:
