@@ -47,6 +47,7 @@ export PATH="$PWD/bin:$PATH"
 ```
 
 Release builds can embed a version with `make build VERSION=v0.1.0`.
+Maintainers preparing a release should follow [the release runbook](docs/releasing.md).
 
 For a persistent per-user installation, copy the binary into a directory that
 is already on your `PATH`, for example:
@@ -307,5 +308,6 @@ or subprocess execution requires a dedicated security review. See
 3. Add an OS-keychain token helper keyed by canonical destination metadata.
 4. Add read-only team context overlays and signed context bundles.
 
-This repository intentionally has no license yet. Choose and add one before
-publishing or accepting external contributions.
+## License
+
+Licensed under the [MIT License](LICENSE).
