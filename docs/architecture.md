@@ -123,7 +123,35 @@ uses `/proc` process states when confirming cleanup because an orphaned,
 already-killed zombie can keep `kill(-pgid, 0)` successful until the host's PID
 1 reaps it; zombie-only groups cannot execute and are quiescent. A child with
 terminal stdin remains in the foreground process group so interactive prompts
-work. On other platforms cancellation is direct-child-only, and a deliberately
+work. macOS observes child exit with a one-shot kqueue process filter. If a
+fast child exits between `Start` and filter registration, registration can
+return `ESRCH`; because the direct child is still unreaped, its PID cannot have
+been reused, so the caller proceeds to `Wait` for the real status. Other
+registration errors and every retrieval error remain fail-closed. If context
+cancellation has already arrived when an exit notification is consumed, the
+unreaped leader continues to reserve the process-group ID while vaultctx
+terminates and confirms the group; the leader's real wait result is retained.
+Registration and retrieval failures take the same signal-before-reap path,
+confirm group quiescence, and retain the observer diagnostic. Pending exit
+notifications are consumed before reaping, so Linux's `waitid(WNOWAIT)` observer
+cannot race with `Wait` and spuriously report `ECHILD`. A failed final group
+signal, unexpected reap result, failed probe, or quiescence timeout is reported
+as incomplete cleanup rather than being masked by concurrent cancellation.
+The sole additional signal-error exception is macOS group-SIGKILL `EPERM`:
+Darwin skips zombies during group signaling, so an unreaped, exited leader
+alone can cause that result. It is accepted only after the direct-child
+fallback and reap succeed and a separate probe confirms group quiescence.
+An `EPERM` probe still means potentially active on both primary platforms;
+neither a failed probe nor a live descendant is excused by this exception.
+The observer-before-reap ordering also applies to terminal-attached children.
+If direct-child SIGKILL is refused, waiting for exit is limited to one second
+before reporting incomplete cleanup; group probing has its own one-second
+bound. A background waiter retains responsibility for the child's eventual
+reap and never sends another signal. This error path cannot promise that a
+signal-denied child has stopped.
+Observer completion is published separately from reaping, so a retrieval
+diagnostic already received is preserved even when the reap deadline expires.
+On other platforms cancellation is direct-child-only, and a deliberately
 daemonized process is outside the portable cleanup policy.
 
 ## Future design constraints

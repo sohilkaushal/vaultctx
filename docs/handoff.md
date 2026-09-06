@@ -1,203 +1,90 @@
-# Current handoff
+# Session handoff
 
-Last updated: 2026-09-02 (UTC)
+Last updated: 2026-09-06. Continue on `codex/fix-fish-shell-integration`.
+The documented macOS EPERM failure and subsequent review findings are fixed.
 
-## Current outcome
+## Current checkpoint
 
-The security-focused MVP is feature-complete, but it is **not yet
-release-stamped**. A Linux CI failure in process-group cleanup was reproduced
-locally and fixed: killed orphan descendants can remain as zombies when the
-host PID 1 does not promptly reap them, and `kill(-pgid, 0)` treats that
-zombie-only, non-runnable group as existing. Linux cleanup confirmation now
-checks `/proc` state and remains fail-closed on inspection errors. The full
-post-fix release matrix and independent reviewer restamp are still pending.
+- Reviewed/tested checkpoint: `5f92942a4f79d206bb55e15bf1a45e7eb76a13f7`.
+  Runtime code is unchanged from `5c6c3d4`.
+- Verified base: `94cf22d5c92f9a60a683e62be8acbf2da2910abc` (`origin/main`).
+- Remote: `git@github.com:sohilkaushal/vaultctx.git`.
+- [PR #2](https://github.com/sohilkaushal/vaultctx/pull/2) remains open. The
+  reviewed checkpoint is pushed; title/body cover Fish and process cleanup.
+- Independent Standards/security and Specification reviewers both restamped
+  `5f92942` with no unresolved P1/P2 findings.
+- Full fmt/vet/test/race, shuffled x20, Linux lifecycle x20, adversarial race
+  x10, and cross-build gates pass. Both final CI runs pass, including real
+  Fish/PowerShell, macOS/Linux stable/oldstable, race, and CodeQL.
+- Fresh internal `v0.1.0` candidate: `bin/vaultctx`, built from clean
+  `5f92942` after local gates passed; smoke checks pass.
+  SHA-256: `cd1561d8191bf2cb6d05055d5013f7d409cca551a886b133f486f27bf2d7f748`.
+- Exact commands, reviews, CI links, and candidate provenance:
+  [review-report.md](review-report.md). Evidence-only commits after this
+  checkpoint do not change its reviewed runtime or tests.
 
-A subsequent P1 review found that Linux treated `EPERM` from the kernel's
-process-group probe as permission to fall back to `/proc`. A filtered `/proc`
-could then hide an inaccessible runnable descendant and produce a false
-quiescence result. The Linux probe now preserves the kernel evidence by
-reporting the group active immediately on `EPERM`; an adversarial regression
-injects that kernel result and verifies it cannot fall through to `/proc`.
+## Root cause and final behavior
 
-Do not rely on the earlier implementation-review `SHIP` verdict: it predates
-the latest process-lifecycle and doctor portability changes. Do not ship the
-existing `bin/vaultctx`; it was built as `v0.1.0-rc1` before those changes.
+A temporary unsandboxed `ps` diagnostic confirmed a zombie leader before
+Darwin's group-SIGKILL returned EPERM. Apple's `killpg1` excludes zombies.
+The diagnostic was removed. Darwin's EPERM exception now requires successful
+direct-child cleanup, reaping, and independent group-quiescence confirmation.
+EPERM probes remain potentially active on macOS and Linux. Live descendants,
+failed probes, and other signal errors remain cleanup errors.
 
-## Latest stop-ship findings and fixes
+Pending observations precede `Wait` in group and terminal-child cancellation,
+avoiding Linux `waitid(WNOWAIT)`/reap races. Refused direct SIGKILL bounds exit
+waiting to one second, with a separate one-second group-probe bound. A sole
+background waiter retains eventual reaping responsibility without more signals.
+Observer results are published separately so available retrieval diagnostics
+survive a reap timeout. Failed cleanup cannot promise a signal-denied child
+has stopped.
 
-The final-quality reviewer returned `DO NOT SHIP` with two concrete P2s:
+Regressions cover 130/143 cancellation, independently completed status 37,
+observer diagnostics, signal-before-reap ordering, and descendant cleanup.
+The branch retains Fish 3.7 empty-value/option-terminator and Darwin kqueue
+registration-race fixes.
 
-1. On macOS, `terminateProcessGroup` could reap the direct child and return a
-   fraction too early while a SIGKILLed same-group descendant wrote one more
-   heartbeat.
-2. `doctor` claimed owner/POSIX checks passed on FreeBSD/OpenBSD and other
-   platforms even though `internal/config/file_identity_other.go` makes
-   ownership/link validation a no-op there.
+## Review and verification history
 
-The current tree addresses both:
+| Checkpoint | Result |
+| --- | --- |
+| `c505489` | Saved WIP; ordinary cancellation fails with EPERM. |
+| `9b7c3ff` | EPERM fixed; both reviewers found terminal observer ordering and unbounded double-refusal cleanup P2s. |
+| `e9dcf6d` | Those P2s fixed; Specification found pending observer diagnostics lost on timeout. |
+| `5c6c3d4` | Runtime approved by both reviewers. CI/shuffle exposed test-only heartbeat timing and cleanup races. |
+| `5f92942` | Test fixes restamped by both reviewers; final local, Linux, and CI gates all pass. |
 
-- `internal/app/process_unix.go` now waits, for a bounded one second, until the
-  killed process group is quiescent. It sends no signal after reaping the
-  leader, avoiding damage if the numeric group ID is reused.
-- If group quiescence cannot be confirmed, the code returns an error wrapping
-  `errProcessCleanupIncomplete`; `runExec` no longer masks that error as ordinary
-  context cancellation.
-- `TestExecCancellationKillsSameGroupDescendants` now also asserts that the
-  process group has no runnable members when `vaultctx` returns.
-- `doctor` reports verified owner/POSIX checks only on Linux, retains the macOS
-  extended-ACL warning, and warns that filesystem ownership/hard-link checks
-  are unverified on other platforms.
-- `TestConfigValidationStatusDoesNotOverclaimUnsupportedPlatforms` covers
-  Linux, macOS, Windows, FreeBSD, OpenBSD, and Plan 9 messages.
+The tests now poll for actual heartbeat advancement within two seconds instead
+of assuming scheduling within 50ms. Cleanup confirms the intentionally surviving
+descendant's quiescence before removing its temporary directory.
 
-The subsequent CI review found and addressed one additional lifecycle issue:
+## Remaining owner/release decisions
 
-- On Linux runners whose PID 1 does not promptly reap orphaned children, the
-  same-group descendant test consistently failed after one second even though
-  SIGKILL had already made every remaining member a zombie. The implementation
-  now distinguishes runnable members from Linux zombies using `/proc`, while
-  macOS retains the process-group existence probe. Parser coverage includes
-  spaces and closing parentheses in process names, and the end-to-end
-  cancellation regression verifies both quiescence and a stopped heartbeat.
+- The GitHub Codex summary was rechecked after the final push and still covers
+  `adda5bd`. Do not represent it as approval of the new head. No new review
+  request comment was sent. Local independent restamps are recorded separately.
+- Public release remains blocked by the absent license (owner decision) and
+  private-reporting setup in `SECURITY.md`. No merge, tag, license, or public
+  release artifact has been created. The internal candidate is not a release.
+- Any later stop-ship edit requires fresh gates and independent restamps.
 
-The follow-up Codex review found and addressed a P1 in that Linux-specific
-logic: `EPERM` from `kill(-pgid, 0)` definitively means a process group exists
-but is inaccessible, so the implementation now reports it active without
-consulting a potentially incomplete `/proc` view.
+## Tooling
 
-## Verification evidence
+Host: macOS arm64, Go 1.26.6, Bash/Zsh installed. Task caches:
+`GOCACHE=/private/tmp/vaultctx-eperm-gocache` and
+`GOMODCACHE=/private/tmp/vaultctx-eperm-gomodcache`.
 
-Current-tree checks completed after the `EPERM` fix:
+The existing Ubuntu 24.04 arm64 container `vaultctx-fish37-debug` was reused
+for compiled Linux app tests; it has Fish but no Go compiler. Test artifacts
+are under `/private/tmp/vaultctx-eperm-cross` and the container's `/tmp`.
+No unrelated containers were changed.
 
-```text
-go test ./internal/app -run 'Test(ProcessGroupActivePreservesPermissionDenied|LinuxProcessGroupState|ExecCancellationKillsSameGroupDescendants)$' -count=10
-PASS
-
-make fmt-check
-make vet
-make test
-make race
-PASS
-```
-
-Current-tree checks completed after the two P2 fixes:
-
-```text
-gofmt -l cmd internal
-PASS (no files reported)
-
-go test ./...
-PASS
-
-go test ./internal/app -run 'Test(ExecCancellationKillsSameGroupDescendants|ConfigValidationStatusDoesNotOverclaimUnsupportedPlatforms|CanceledActivationDoesNotEmitScript)$' -count=10
-PASS
-
-go test ./internal/app -run '^TestExecCancellationKillsSameGroupDescendants$' -count=300
-PASS (124.951s)
-
-go test ./internal/app -run 'Test(ExecCancellationKillsSameGroupDescendants|LinuxProcessGroupState)$' -count=20
-PASS
-
-make fmt-check
-PASS
-
-make vet
-PASS
-
-make test
-PASS
-
-make race
-PASS
-
-go test ./... -shuffle=on -count=10
-PASS
-
-CGO_ENABLED=0 GOOS=<os> GOARCH=<arch> go build -o /private/tmp/vaultctx-<os>-<arch> ./cmd/vaultctx
-PASS for Linux amd64/arm64, Windows amd64, FreeBSD amd64, OpenBSD amd64,
-illumos amd64, Plan 9 amd64, and Darwin amd64/arm64
-```
-
-The first post-review complete gate exposed the Linux zombie-only group failure
-during `make test`; that attempt did not reach `make race`. The required full
-gate is now green after the fix. These additional release gates remain stale
-and must be rerun on the current tree:
-
-- focused Bash/Zsh, cancellation, and lock repetitions
-- a real CLI add/use/env/exec/doctor smoke flow
-
-Fish and PowerShell are not installed on this host. Their real-shell tests are
-present in `internal/contextenv/contextenv_test.go`; CI installs Fish, requires
-`pwsh`, and runs both suites. Treat that CI job as mandatory before public
-release.
-
-## Resume checklist
-
-Use a sandbox-writable cache:
+SSH push later failed because the agent could not sign. The existing
+authenticated HTTPS connection succeeded without changing the configured remote:
 
 ```sh
-export GOCACHE=/private/tmp/vaultctx-handoff-gocache
+git -c credential.helper='!gh auth git-credential' push https://github.com/sohilkaushal/vaultctx.git HEAD:refs/heads/codex/fix-fish-shell-integration
 ```
 
-Then run:
-
-```sh
-gofmt -l cmd internal
-go vet ./...
-go test ./...
-go test -race ./...
-go test ./... -shuffle=on -count=20
-go test ./internal/contextenv -run 'Test(ShellInitRunsAtTopLevelInBashAndZsh|BashAndZshShellInitRejectNestedScopedActivation|BashAndZshShellInitRejectCrossDialectUse|BashShellInitRejectsReadonlyEnvironmentWithoutPartialActivation)$' -count=50
-go test ./internal/config -run 'Test(PersistentLockRepairsRestrictiveUmask|StoreConcurrentUpdatesDoNotLoseMutations)$' -count=20
-```
-
-Cross-build the entrypoint with `CGO_ENABLED=0` for:
-
-```text
-linux/amd64
-linux/arm64
-windows/amd64
-freebsd/amd64
-openbsd/amd64
-illumos/amd64
-plan9/amd64
-```
-
-Write outputs outside the repository, for example under `/private/tmp`, so
-targets cannot overwrite one another or the local binary.
-
-After all gates pass:
-
-1. Obtain fresh independent `SHIP` verdicts on the current tree, specifically
-   asking reviewers to recheck process-group quiescence and doctor portability.
-2. Run the Fish/PowerShell CI integration job.
-3. Add `docs/review-report.md` with exact current-tree evidence and caveats.
-4. Build a fresh `v0.1.0` binary and checksum it.
-5. Smoke-test add/list/saved-default use, shell rendering, guarded `exec`, and
-   `doctor` with an isolated absolute `VAULTCTX_CONFIG`.
-
-## Environment and release caveats
-
-- This is an active Git repository. Work started from `main` at `43eab54`, with
-  `origin` pointing to `git@github.com:sohilkaushal/vaultctx.git`. Verify the
-  current branch and remote state when resuming; this handoff does not represent
-  a release tag or published GitHub release.
-- The repository intentionally has no `LICENSE`. A local/internal candidate can
-  be tested, but public publication and external contributions require the
-  owner to choose a license.
-- The local host is `darwin/arm64` with Go 1.26.6. Vault and `fzf` are installed;
-  Bash and Zsh are available; Fish and PowerShell are not.
-- `README.md` and `SECURITY.md` describe this as an MVP, not a production audit
-  or an authorization boundary.
-
-## Review history
-
-- Implementation/security reviewer: issued `SHIP` with no P1/P2 findings on
-  the tree before the latest two fixes. That verdict is stale and must be
-  renewed.
-- Final-quality reviewer: issued `DO NOT SHIP` for the process-group and doctor
-  portability P2s above. Both are addressed locally, but the reviewer has not
-  yet restamped the fix.
-
-No agent should collapse this history into an unconditional release approval
-until the resume checklist is complete.
+The project remains standard-library-only, with no license and no `go.sum`.
