@@ -21,11 +21,6 @@ handled by the repository maintainer. Use
 to open a private report. Keep exploit details and follow-up discussion inside
 that private advisory rather than public issues or pull requests.
 
-**Release preparation status:** enabling this route in repository settings has
-not yet been verified. Public release is blocked until it is enabled and the
-reporting form is available. If the form is unavailable, do not post sensitive
-details publicly; wait for the private route to become available.
-
 Include the affected version or commit, OS and shell versions, expected versus
 actual behavior, impact, and minimal reproduction steps with fake data. Redact
 credentials and operational metadata from any logs or screenshots. A report

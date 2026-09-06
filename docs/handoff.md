@@ -16,9 +16,10 @@ The documented macOS EPERM failure and subsequent review findings are fixed.
   choice. `LICENSE` contains MIT with copyright 2026 Sohil Kaushal. The chosen
   route is GitHub private vulnerability reporting to the repository maintainer;
   no personal email is published. `SECURITY.md` includes the private form link.
-- The connector cannot inspect or change private-reporting settings. An owner
-  must enable it under Settings > Advanced Security and verify the reporting
-  form, then remove the preparation-status paragraph from `SECURITY.md`.
+- The owner confirmed private vulnerability reporting was enabled on
+  2026-09-06. This is owner-confirmed setup, not an independent connector check;
+  the connector cannot inspect that setting. The preparation-status paragraph
+  has been removed from `SECURITY.md`.
 - This branch updates licensing and release documentation only. The runbook is
   [releasing.md](releasing.md); the proposed release description is
   [releases/v0.1.0.md](releases/v0.1.0.md).
@@ -30,11 +31,15 @@ The documented macOS EPERM failure and subsequent review findings are fixed.
   [PR CI](https://github.com/sohilkaushal/vaultctx/actions/runs/34013263004),
   [push CI](https://github.com/sohilkaushal/vaultctx/actions/runs/34013243208), and
   [analysis checks](https://github.com/sohilkaushal/vaultctx/actions/runs/34013261829).
-  The MIT/security-policy follow-up needs its own CI result; the earlier checks
-  do not cover that commit. No runtime code or tests changed.
-- Next: enable/verify private vulnerability reporting, confirm follow-up CI,
-  finalize the release docs, then follow the runbook from the final reviewed
-  commit. The license and security-contact choices are resolved.
+  The MIT/security-policy follow-up `3dea9ec89b70196ba81a435938f4b6315ab7808f`
+  also passed [PR CI](https://github.com/sohilkaushal/vaultctx/actions/runs/34013915501),
+  [push CI](https://github.com/sohilkaushal/vaultctx/actions/runs/34013913809), and
+  [analysis checks](https://github.com/sohilkaushal/vaultctx/actions/runs/34013914041).
+  This owner-confirmation documentation follow-up will have its own CI result
+  on PR #3; no runtime code or tests changed.
+- Next: review/merge PR #3 after its latest checks pass, then follow the runbook
+  for release validation, packaging, and publication approval. Licensing and
+  private-reporting setup are resolved.
 
 ## Historical reviewed checkpoint before merge
 
@@ -96,9 +101,9 @@ descendant's quiescence before removing its temporary directory.
 - Before merge, the GitHub Codex summary was rechecked and still covered
   `adda5bd`. Do not represent it as approval of the new head. No new review
   request comment was sent. Local independent restamps are recorded separately.
-- MIT is now included on this branch. Public release still requires verified
-  private-reporting setup in `SECURITY.md` and the remaining build/publication
-  gates in `releasing.md`. PR #2 is merged, but the internal candidate is not a
+- MIT is included and the owner confirmed private-reporting setup. Public
+  release still requires the remaining build/publication gates in
+  `releasing.md`. PR #2 is merged, but the internal candidate is not a
   release. No tag or public release artifact has been created by this work.
 - Any later stop-ship edit requires fresh gates and independent restamps.
 

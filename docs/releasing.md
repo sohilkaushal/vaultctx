@@ -11,13 +11,11 @@ archives or new runtime verification results are claimed.
 - [x] Security contact route selected under the owner's delegation: GitHub
   private vulnerability reporting to the repository maintainer. `SECURITY.md`
   links to the private form; no personal email is published.
-- [ ] Enable and verify GitHub private vulnerability reporting. The current
-  connector cannot inspect or change this setting. In repository Settings,
-  open Advanced Security, then enable Private vulnerability reporting. Check
-  that Report a vulnerability appears on the repository's Advisories page.
-  Follow [GitHub's setup instructions](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository),
-  including security-alert notifications for the maintainer. Remove the
-  preparation-status paragraph in `SECURITY.md` only after verification.
+- [x] Owner confirmed GitHub private vulnerability reporting is enabled on
+  2026-09-06. The preparation-status paragraph was removed from `SECURITY.md`.
+  The connector cannot inspect that setting; this records the owner's
+  confirmation. For maintenance and security-alert notification settings, see
+  [GitHub's instructions](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository).
 - [ ] Review and merge the final release documentation. Update supported
   status in `SECURITY.md` to the intended MVP support policy.
 - [ ] All P1/P2 findings are resolved, with independent review restamps after
